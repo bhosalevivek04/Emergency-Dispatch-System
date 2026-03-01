@@ -1,0 +1,19 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: emergency-service
+          uri: ${EMERGENCY_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/emergency,/emergency/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
