@@ -1,0 +1,11 @@
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+# Local development profile
+# Use this when running the service locally (not in Docker)
+# Run with: ./mvnw spring-boot:run -Dspring-boot.run.profiles=local

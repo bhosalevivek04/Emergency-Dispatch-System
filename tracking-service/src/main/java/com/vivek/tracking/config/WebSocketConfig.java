@@ -14,11 +14,19 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 	public void registerStompEndpoints(StompEndpointRegistry registry) {
 		// Native WebSocket endpoint (no SockJS)
 		registry.addEndpoint("/ws")
-			.setAllowedOriginPatterns("https://mobile-driver-app.onrender.com", "http://localhost:*");
+			.setAllowedOriginPatterns(
+				"https://mobile-driver-app.onrender.com", 
+				"http://localhost:*",
+				"http://127.0.0.1:*"
+			);
 		
 		// SockJS fallback endpoint
 		registry.addEndpoint("/ws-sockjs")
-			.setAllowedOriginPatterns("https://mobile-driver-app.onrender.com", "http://localhost:*")
+			.setAllowedOriginPatterns(
+				"https://mobile-driver-app.onrender.com", 
+				"http://localhost:*",
+				"http://127.0.0.1:*"
+			)
 			.withSockJS()
 			.setSessionCookieNeeded(false);  // Important!
 	}

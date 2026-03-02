@@ -33,3 +33,8 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+
+# OSRM configuration for route following
+osrm:
+  url: ${OSRM_URL:http://localhost:5000}
+  enabled: ${OSRM_ENABLED:true}

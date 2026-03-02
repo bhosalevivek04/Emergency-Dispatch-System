@@ -25,17 +25,25 @@ spring:
 
         # Tracking Service Routes
         - id: tracking-service
-          uri: ${TRACKING_SERVICE_URL:http://localhost:8084}
+          uri: ${TRACKING_SERVICE_URL:http://localhost:8085}
           predicates:
             - Path=/api/tracking,/api/tracking/**
           filters:
-            - RewritePath=/api/tracking(?<segment>/?.*), /tracking${segment}
+            - RewritePath=/api/tracking(?<segment>/?.*), /api/tracking${segment}
 
         # WebSocket Route for Tracking Service
         - id: tracking-websocket
-          uri: ${TRACKING_SERVICE_URL:lb:ws://localhost:8084}
+          uri: ${TRACKING_SERVICE_URL:ws://localhost:8085}
           predicates:
             - Path=/ws/**
+
+        # Notification Service Routes
+        - id: notification-service
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/api/notifications,/api/notifications/**
+          filters:
+            - RewritePath=/api/notifications(?<segment>/?.*), /notification${segment}
 
         # Dispatch Service Routes (if needed)
         - id: dispatch-service

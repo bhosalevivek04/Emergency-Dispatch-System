@@ -6,10 +6,10 @@ spring:
     name: dispatch-service
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      host: 127.0.0.1
+      port: 6379
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    bootstrap-servers: 127.0.0.1:9092
     consumer:
       group-id: dispatch-group
       auto-offset-reset: earliest
@@ -37,3 +37,8 @@ management:
         dispatch.assignment.publish.latency: true
       percentiles:
         dispatch.assignment.publish.latency: 0.5,0.95,0.99
+
+logging:
+  level:
+    org.apache.kafka: INFO
+    org.springframework.kafka: INFO

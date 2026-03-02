@@ -7,11 +7,9 @@ import lombok.NoArgsConstructor;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class AssignmentEvent {
-	private String emergencyId;
+public class AmbulanceRegistrationRequest {
 	private String ambulanceId;
-	private double distanceKm;
-	private long version;
-	private double emergencyLat;
-	private double emergencyLon;
+	private Double latitude;
+	private Double longitude;
+	private String status;
 }

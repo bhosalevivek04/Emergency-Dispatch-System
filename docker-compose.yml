@@ -11,9 +11,10 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
 
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
@@ -22,9 +23,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-    volumes:
-      - kafka_data:/tmp/kraft-combined-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
 
   redis:
     image: redis:7
@@ -85,6 +84,20 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     restart: always
 
+  tracking-service:
+    build: ./tracking-service
+    container_name: tracking-service
+    depends_on:
+      - kafka
+      - redis
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    restart: always
+
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
@@ -123,6 +136,15 @@ services:
     image: grafana/grafana-image-renderer:latest
     container_name: grafana-renderer
     restart: unless-stopped
+
+  tracking-client:
+    build: ./tracking-client
+    container_name: tracking-client
+    depends_on:
+      - tracking-service
+    ports:
+      - "3001:80"
+    restart: always
 
 volumes:
   kafka_data:

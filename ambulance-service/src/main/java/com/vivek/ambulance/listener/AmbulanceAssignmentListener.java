@@ -20,6 +20,7 @@ import com.vivek.ambulance.dto.CompletionEvent;
 import com.vivek.ambulance.model.AmbulanceStatus;
 import com.vivek.ambulance.service.AmbulanceProducer;
 import com.vivek.ambulance.service.AmbulanceStateTracker;
+import com.vivek.ambulance.service.AmbulanceMovementSimulator;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class AmbulanceAssignmentListener {
 	private final ObjectMapper objectMapper;
 	private final AmbulanceProducer ambulanceProducer;
 	private final AmbulanceStateTracker ambulanceStateTracker;
+	private final AmbulanceMovementSimulator movementSimulator;
 	private final StringRedisTemplate redisTemplate;
 	private final MeterRegistry meterRegistry;
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
@@ -70,9 +72,41 @@ public class AmbulanceAssignmentListener {
 			return;
 		}
 
-		scheduler.schedule(() -> transitionToOnRoute(ambulanceId, assignedExpectedVersion + 1), 3, TimeUnit.SECONDS);
-		scheduler.schedule(() -> transitionToArrived(ambulanceId, assignedExpectedVersion + 2), 5, TimeUnit.SECONDS);
-		scheduler.schedule(() -> completeTrip(assignment, assignedExpectedVersion + 3), 8, TimeUnit.SECONDS);
+		// Set destination for movement simulator from assignment event
+		double estimatedDurationSeconds = 0;
+		if (assignment.getEmergencyLat() != 0 && assignment.getEmergencyLon() != 0) {
+			estimatedDurationSeconds = movementSimulator.setDestination(ambulanceId, assignment.getEmergencyLat(), assignment.getEmergencyLon());
+			log.info("Ambulance {} will move to emergency at ({}, {}), ETA: {} minutes", 
+				ambulanceId, assignment.getEmergencyLat(), assignment.getEmergencyLon(), estimatedDurationSeconds / 60.0);
+		}
+		
+		// Calculate dynamic state transition times based on actual route duration
+		// If no duration available (OSRM failed), use default timings
+		long onRouteDelay, arrivedDelay, completedDelay;
+		
+		if (estimatedDurationSeconds > 0) {
+			// ON_ROUTE: 10% of journey time (ambulance starts moving)
+			onRouteDelay = Math.max(2, (long)(estimatedDurationSeconds * 0.1));
+			
+			// ARRIVED: 90% of journey time (ambulance reaches destination)
+			arrivedDelay = Math.max(5, (long)(estimatedDurationSeconds * 0.9));
+			
+			// COMPLETED: Full journey time + 30 seconds for patient loading
+			completedDelay = (long)(estimatedDurationSeconds + 30);
+			
+			log.info("Dynamic state transitions for {}: ON_ROUTE in {}s, ARRIVED in {}s, COMPLETED in {}s",
+				ambulanceId, onRouteDelay, arrivedDelay, completedDelay);
+		} else {
+			// Fallback to default timings
+			onRouteDelay = 3;
+			arrivedDelay = 5;
+			completedDelay = 8;
+			log.info("Using default state transitions for {} (no route duration available)", ambulanceId);
+		}
+
+		scheduler.schedule(() -> transitionToOnRoute(ambulanceId, assignedExpectedVersion + 1), onRouteDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> transitionToArrived(ambulanceId, assignedExpectedVersion + 2), arrivedDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> completeTrip(assignment, assignedExpectedVersion + 3), completedDelay, TimeUnit.SECONDS);
 	}
 
 	private void transitionToOnRoute(String ambulanceId, long expectedVersion) {
@@ -96,6 +130,9 @@ public class AmbulanceAssignmentListener {
 		ambulanceProducer.sendCompletion(completion);
 		meterRegistry.counter("ambulance.completions.published.total").increment();
 		redisTemplate.delete(activeEmergencyKey(ambulanceId));
+
+		// Clear destination - ambulance can now patrol
+		movementSimulator.clearDestination(ambulanceId);
 
 		ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.AVAILABLE, completionVersion);
 		log.info("Completion published ambulanceId={} emergencyId={} completionVersion={}", ambulanceId,

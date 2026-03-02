@@ -1,0 +1,3 @@
+# This file keeps the osrm-data directory in git
+# Download Pune map data from: https://download.geofabrik.de/asia/india.html
+# Save as: pune.osm.pbf

@@ -14,7 +14,11 @@ public class CorsConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
-                    .allowedOriginPatterns("https://mobile-driver-app.onrender.com", "http://localhost:*")
+                    .allowedOriginPatterns(
+                        "https://mobile-driver-app.onrender.com", 
+                        "http://localhost:*",
+                        "http://127.0.0.1:*"
+                    )
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                     .allowedHeaders("*")
                     .allowCredentials(false);  // Must be false!

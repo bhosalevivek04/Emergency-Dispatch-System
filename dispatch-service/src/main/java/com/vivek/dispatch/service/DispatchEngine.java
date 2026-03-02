@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vivek.dispatch.dto.AmbulanceLocationEvent;
 import com.vivek.dispatch.dto.AssignmentEvent;
 import com.vivek.dispatch.dto.EmergencyEvent;
+import com.vivek.dispatch.dto.OSRMRoute;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class DispatchEngine {
 	private final StringRedisTemplate redisTemplate;
 	private final ObjectMapper objectMapper;
 	private final MeterRegistry meterRegistry;
+	private final OSRMService osrmService;
 
 	private final Map<String, AmbulanceLocationEvent> ambulanceState = new ConcurrentHashMap<>();
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
@@ -75,6 +77,8 @@ public class DispatchEngine {
 	public void handleAmbulanceUpdate(AmbulanceLocationEvent ambulance) {
 		ambulanceState.put(ambulance.getAmbulanceId(), ambulance);
 		initializeAmbulanceStateIfAbsent(ambulance.getAmbulanceId());
+		log.debug("Ambulance location updated ambulanceId={} lat={} lon={} cacheSize={}", 
+			ambulance.getAmbulanceId(), ambulance.getLatitude(), ambulance.getLongitude(), ambulanceState.size());
 	}
 
 	private void dispatchNextEmergency() {
@@ -84,11 +88,13 @@ public class DispatchEngine {
 				return;
 			}
 
+			log.debug("Processing emergency emergencyId={} priority={}", emergency.getEmergencyId(), emergency.getPriority());
+
 			AmbulanceLocationEvent nearest = findNearestAvailable(emergency);
 			if (nearest == null) {
 				noAvailableAmbulanceCounter.increment();
-				log.warn("No ambulance available emergencyId={} knownAmbulances={}", emergency.getEmergencyId(),
-						ambulanceState.size());
+				log.warn("No ambulance available emergencyId={} knownAmbulances={} availableCount={}", 
+					emergency.getEmergencyId(), ambulanceState.size(), getAvailableAmbulanceCount());
 				return;
 			}
 
@@ -104,19 +110,24 @@ public class DispatchEngine {
 				Timer.Sample publishTimer = Timer.start(meterRegistry);
 				long assignmentVersion = getVersion(ambulanceId);
 
-				double distance = calculateDistance(emergency.getLat(), emergency.getLon(), nearest.getLat(),
-						nearest.getLon());
-				AssignmentEvent assignment = new AssignmentEvent(emergency.getEmergencyId(), ambulanceId, distance,
-						assignmentVersion);
+				OSRMRoute route = osrmService.getRoute(nearest.getLatitude(), nearest.getLongitude(), 
+					emergency.getLat(), emergency.getLon());
+				
+				double distanceKm = route != null ? route.getDistance() / 1000.0 : 
+					calculateDistance(emergency.getLat(), emergency.getLon(), nearest.getLatitude(), nearest.getLongitude());
+				double etaSeconds = route != null ? route.getDuration() : distanceKm * 120; // fallback: ~30 km/h
+				
+				AssignmentEvent assignment = new AssignmentEvent(emergency.getEmergencyId(), ambulanceId, 
+					distanceKm, assignmentVersion, emergency.getLat(), emergency.getLon());
 				kafkaTemplate.send(ASSIGNMENT_TOPIC, emergency.getEmergencyId(), assignment).get(5, TimeUnit.SECONDS);
 				acknowledgeEmergency(emergency);
 				assignmentPublishedCounter.increment();
 				publishTimer.stop(assignmentPublishTimer);
 
 				log.info(
-						"Assignment published emergencyId={} ambulanceId={} priority={} distanceKm={} version={}",
-						emergency.getEmergencyId(), nearest.getAmbulanceId(), emergency.getPriority(), distance,
-						assignmentVersion);
+						"Assignment published emergencyId={} ambulanceId={} priority={} distanceKm={} etaMin={} version={}",
+						emergency.getEmergencyId(), nearest.getAmbulanceId(), emergency.getPriority(), 
+						String.format("%.2f", distanceKm), String.format("%.1f", etaSeconds / 60.0), assignmentVersion);
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				assignmentPublishFailureCounter.increment();
@@ -268,18 +279,28 @@ public class DispatchEngine {
 
 	private AmbulanceLocationEvent findNearestAvailable(EmergencyEvent emergency) {
 		AmbulanceLocationEvent nearest = null;
-		double minDistance = Double.MAX_VALUE;
+		double minEta = Double.MAX_VALUE;
 
 		for (AmbulanceLocationEvent ambulance : ambulanceState.values()) {
 			if (!isAvailableInRedis(ambulance.getAmbulanceId())) {
 				continue;
 			}
 
-			double distance = calculateDistance(emergency.getLat(), emergency.getLon(), ambulance.getLat(),
-					ambulance.getLon());
+			OSRMRoute route = osrmService.getRoute(ambulance.getLatitude(), ambulance.getLongitude(), 
+				emergency.getLat(), emergency.getLon());
+			
+			double eta;
+			if (route != null) {
+				eta = route.getDuration(); // Real road ETA in seconds
+			} else {
+				// Fallback to Haversine with estimated speed
+				double distance = calculateDistance(emergency.getLat(), emergency.getLon(), 
+					ambulance.getLatitude(), ambulance.getLongitude());
+				eta = distance * 120; // ~30 km/h average speed
+			}
 
-			if (distance < minDistance) {
-				minDistance = distance;
+			if (eta < minEta) {
+				minEta = eta;
 				nearest = ambulance;
 			}
 		}

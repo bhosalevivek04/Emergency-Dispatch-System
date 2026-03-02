@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: osrm-pune
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm-data:/data
+    command: >
+      sh -c "
+      if [ ! -f /data/pune.osrm ]; then
+        echo 'Preprocessing Pune map data...';
+        osrm-extract -p /opt/car.lua /data/pune.osm.pbf &&
+        osrm-partition /data/pune.osrm &&
+        osrm-customize /data/pune.osrm;
+      fi &&
+      echo 'Starting OSRM server...' &&
+      osrm-routed --algorithm mld /data/pune.osrm
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

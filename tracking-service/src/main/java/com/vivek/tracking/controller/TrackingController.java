@@ -17,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.vivek.tracking.dto.AmbulanceLocationEvent;
 import com.vivek.tracking.service.TrackingCacheService;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
