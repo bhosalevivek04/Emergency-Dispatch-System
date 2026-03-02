@@ -3,6 +3,7 @@ package com.vivek.tracking.controller;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -22,11 +23,17 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RestController
 @RequestMapping("/tracking")
-@RequiredArgsConstructor
 public class TrackingController {
 
 	private final TrackingCacheService trackingCacheService;
 	private final KafkaTemplate<String, AmbulanceLocationEvent> kafkaTemplate;
+
+	public TrackingController(
+			TrackingCacheService trackingCacheService,
+			@Autowired(required = false) KafkaTemplate<String, AmbulanceLocationEvent> kafkaTemplate) {
+		this.trackingCacheService = trackingCacheService;
+		this.kafkaTemplate = kafkaTemplate;
+	}
 
 	// Rate limiting: Track last update time per ambulance
 	private final Map<String, Long> lastUpdateTime = new ConcurrentHashMap<>();
@@ -88,23 +95,27 @@ public class TrackingController {
 			location.setTimestamp(currentTime);
 		}
 
-		// Send to Kafka (async, non-blocking)
+		// Send to Kafka (async, non-blocking) - only if Kafka is available
 		try {
-			kafkaTemplate.send("ambulance-location-topic", ambulanceId, location);
-			
-			log.debug("Location update sent to Kafka: {} at ({}, {})", 
-					ambulanceId, location.getLatitude(), location.getLongitude());
+			if (kafkaTemplate != null) {
+				kafkaTemplate.send("ambulance-location-topic", ambulanceId, location);
+				log.debug("Location update sent to Kafka: {} at ({}, {})", 
+						ambulanceId, location.getLatitude(), location.getLongitude());
+			} else {
+				log.debug("Kafka not available, location update received: {} at ({}, {})", 
+						ambulanceId, location.getLatitude(), location.getLongitude());
+			}
 
 			return ResponseEntity.ok(Map.of(
 					"status", "success",
-					"message", "Location update sent",
+					"message", "Location update received",
 					"ambulanceId", ambulanceId,
 					"timestamp", currentTime
 			));
 		} catch (Exception e) {
-			log.error("Error sending location to Kafka: {}", e.getMessage());
+			log.error("Error processing location: {}", e.getMessage());
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-					.body(Map.of("error", "Failed to send location update"));
+					.body(Map.of("error", "Failed to process location update"));
 		}
 	}
 
