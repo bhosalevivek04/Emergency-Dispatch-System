@@ -1,0 +1,10 @@
+version: "2"
+authtoken: 3ANEUci8ZIvVssov1Sd2uY1q8Z7_gpw8BAa9E4ZGqfKRadTx
+tunnels:
+  api-gateway:
+    proto: http
+    addr: 8080
+    domain: nonqualitatively-retrolental-joselyn.ngrok-free.dev
+  tracking-service:
+    proto: http
+    addr: 8084

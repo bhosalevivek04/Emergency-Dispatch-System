@@ -7,10 +7,41 @@ spring:
   cloud:
     gateway:
       routes:
+        # Emergency Service Routes
         - id: emergency-service
           uri: ${EMERGENCY_SERVICE_URL:http://localhost:8081}
           predicates:
-            - Path=/emergency,/emergency/**
+            - Path=/api/emergencies,/api/emergencies/**
+          filters:
+            - RewritePath=/api/emergencies(?<segment>/?.*), /emergency${segment}
+
+        # Ambulance Service Routes
+        - id: ambulance-service
+          uri: ${AMBULANCE_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/ambulances,/api/ambulances/**
+          filters:
+            - RewritePath=/api/ambulances(?<segment>/?.*), /ambulance${segment}
+
+        # Tracking Service Routes
+        - id: tracking-service
+          uri: ${TRACKING_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/api/tracking,/api/tracking/**
+          filters:
+            - RewritePath=/api/tracking(?<segment>/?.*), /tracking${segment}
+
+        # WebSocket Route for Tracking Service
+        - id: tracking-websocket
+          uri: ${TRACKING_SERVICE_URL:lb:ws://localhost:8084}
+          predicates:
+            - Path=/ws/**
+
+        # Dispatch Service Routes (if needed)
+        - id: dispatch-service
+          uri: ${DISPATCH_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/api/dispatch,/api/dispatch/**
 
 management:
   endpoints:
