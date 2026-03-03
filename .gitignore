@@ -117,6 +117,9 @@ spring-boot-devtools.properties
 test-websocket.html
 watch-ambulance.ps1
 test-emergency.json
+test-phase2.ps1
+test-phase3.ps1
+diagnose-ambulance-service.ps1
 reference/
 
 # Error logs
