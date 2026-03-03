@@ -34,8 +34,8 @@
 **Subtasks**:
 - [x] Wrap objectMapper.readValue() in try-catch in DispatchListener (3 methods)
 - [x] Wrap objectMapper.readValue() in try-catch in AmbulanceAssignmentListener
-- [ ] Wrap objectMapper.readValue() in try-catch in TrackingListener
-- [ ] Wrap objectMapper.readValue() in try-catch in NotificationListener
+- [x] Wrap objectMapper.readValue() in try-catch in TrackingLocationListener
+- [x] Wrap objectMapper.readValue() in try-catch in NotificationListener
 - [x] Remove `throws JsonProcessingException` from listener method signatures
 - [x] Add parse_error metrics for each listener
 - [ ] Test: Send malformed JSON → logged once, sent to DLT, no retry loop
@@ -43,7 +43,7 @@
 **Files**:
 - MODIFY: dispatch-service/src/main/java/com/vivek/dispatch/listener/DispatchListener.java
 - MODIFY: ambulance-service/src/main/java/com/vivek/ambulance/listener/AmbulanceAssignmentListener.java
-- MODIFY: tracking-service/src/main/java/com/vivek/tracking/listener/TrackingListener.java
+- MODIFY: tracking-service/src/main/java/com/vivek/tracking/listener/TrackingLocationListener.java
 - MODIFY: notification-service/src/main/java/com/vivek/notification/listener/NotificationListener.java
 
 ---
@@ -325,14 +325,14 @@
 ---
 
 ### Task 4.2: Fix Docker Network Configuration
-**Status**: pending
+**Status**: completed
 **Priority**: low
 **Estimated Effort**: 5 minutes
 
 **Subtasks**:
-- [ ] Add networks: [dispatch-network] to tracking-service in docker-compose.yml
-- [ ] Add networks: [dispatch-network] to notification-service in docker-compose.yml
-- [ ] Test: All services can reach Redis and Kafka
+- [x] Add networks: [dispatch-network] to tracking-service in docker-compose.yml
+- [x] Add networks: [dispatch-network] to notification-service in docker-compose.yml
+- [x] Test: All services can reach Redis and Kafka
 
 **Files**:
 - MODIFY: docker-compose.yml
@@ -340,15 +340,17 @@
 ---
 
 ### Task 4.3: Add @Transactional Annotations
-**Status**: pending
+**Status**: completed
 **Priority**: low
 **Estimated Effort**: 15 minutes
 
 **Subtasks**:
-- [ ] Add @Transactional to EmergencyService.updateStatus()
-- [ ] Review other status update methods across services
-- [ ] Add @Transactional where missing
-- [ ] Test: Automatic rollback on exceptions
+- [x] Add @Transactional to EmergencyService.updateStatus() (already present)
+- [x] Review other status update methods across services
+- [x] Add @Transactional where missing
+- [x] Test: Automatic rollback on exceptions
+
+**Note**: EmergencyService.updateStatus() already has @Transactional annotation. All database update methods properly annotated.
 
 **Files**:
 - MODIFY: emergency-service/src/main/java/com/vivek/emergency/service/EmergencyService.java

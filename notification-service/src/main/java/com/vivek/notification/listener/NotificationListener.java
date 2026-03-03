@@ -19,7 +19,7 @@ public class NotificationListener {
 	private final MeterRegistry meterRegistry;
 
 	@KafkaListener(topics = "ambulance-assigned-topic", groupId = "notification-group")
-	public void consumeAssignment(String message) throws Exception {
+	public void consumeAssignment(String message) {
 		try {
 			AssignmentEvent event = objectMapper.readValue(message, AssignmentEvent.class);
 			meterRegistry.counter("notification.assignments.consumed.total").increment();
@@ -27,8 +27,8 @@ public class NotificationListener {
 			log.info("Notification sent emergencyId={} ambulanceId={} distanceKm={} version={}", event.getEmergencyId(),
 					event.getAmbulanceId(), event.getDistanceKm(), event.getVersion());
 		} catch (Exception ex) {
-			meterRegistry.counter("notification.consume.failures.total").increment();
-			throw ex;
+			meterRegistry.counter("notification.parse_error.total").increment();
+			log.error("Failed to parse or process assignment notification: {}", message, ex);
 		}
 	}
 }
