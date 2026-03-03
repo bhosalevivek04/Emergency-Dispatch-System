@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  
+  h2:
+    console:
+      enabled: false
+  
+  task:
+    scheduling:
+      enabled: false
+
+# JWT Configuration for tests
+jwt:
+  secret: test-secret-key-for-jwt-signing-minimum-32-characters-required-for-hs256
+  expiration: 900000 # 15 minutes
+  refresh-expiration: 604800000 # 7 days
+
+# Disable actuator for tests
+management:
+  endpoints:
+    enabled-by-default: false
+
+logging:
+  level:
+    com.vivek.auth: DEBUG

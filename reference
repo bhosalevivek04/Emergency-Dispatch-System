@@ -1,898 +1,157 @@
-Let me start with the highest-priority fixes systematically.Now I have everything. Let me generate all the fixed files.The execution environment seems to have reset. Let me produce the updated code directly in the response — all fixed files with full source code.
+Let me read the actual current state of the codebase to see exactly what's done and what still needs fixing.Good. Now I have everything. Let me produce all 4 remaining files with precise, complete code.
 
 ---
 
-## ✅ Updated Code — All Critical & Serious Fixes
+## ✅ Remaining Fixes — Complete Updated Code
 
-Here are all the fixed files. Drop each one in at the path shown.
+Here are the 4 files that still need changing. These are production-ready, drop-in replacements.
 
 ---
 
-### FIX 1 — Outbox Pattern (replaces dual-write)
+### FILE 1 — `notification-service/src/main/java/com/vivek/notification/listener/NotificationListener.java`
 
-**`emergency-service/src/main/java/com/vivek/emergency/entity/OutboxEvent.java`** *(new file)*
+**Problem:** `throws Exception` on the listener method causes Spring Kafka to retry the message on any failure, including bad JSON. The catch block re-throws, making the `try/catch` pointless.
+
 ```java
-package com.vivek.emergency.entity;
-
-import jakarta.persistence.*;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-import java.time.LocalDateTime;
-
-@Entity
-@Table(name = "outbox_events", indexes = {
-    @Index(name = "idx_outbox_unpublished", columnList = "published, createdAt")
-})
-@Data
-@NoArgsConstructor
-public class OutboxEvent {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(name = "aggregate_type", nullable = false, length = 50)
-    private String aggregateType;
-
-    @Column(name = "aggregate_id", nullable = false, length = 50)
-    private String aggregateId;
-
-    @Column(name = "kafka_topic", nullable = false, length = 100)
-    private String kafkaTopic;
-
-    @Column(name = "payload", columnDefinition = "TEXT", nullable = false)
-    private String payload;
-
-    @Column(name = "published", nullable = false)
-    private boolean published = false;
-
-    @Column(name = "published_at")
-    private LocalDateTime publishedAt;
-
-    @Column(name = "retry_count", nullable = false)
-    private int retryCount = 0;
-
-    @Column(name = "last_retry_at")
-    private LocalDateTime lastRetryAt;
-
-    @Column(name = "error_message", columnDefinition = "TEXT")
-    private String errorMessage;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
-
-    public static OutboxEvent of(String aggregateType, String aggregateId,
-                                  String kafkaTopic, String payload) {
-        OutboxEvent e = new OutboxEvent();
-        e.aggregateType = aggregateType;
-        e.aggregateId = aggregateId;
-        e.kafkaTopic = kafkaTopic;
-        e.payload = payload;
-        return e;
-    }
-}
-```
-
----
-
-**`emergency-service/src/main/java/com/vivek/emergency/repository/OutboxEventRepository.java`** *(new file)*
-```java
-package com.vivek.emergency.repository;
-
-import com.vivek.emergency.entity.OutboxEvent;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-
-import java.time.LocalDateTime;
-import java.util.List;
-
-@Repository
-public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> {
-
-    @Query("SELECT o FROM OutboxEvent o WHERE o.published = false " +
-           "AND o.retryCount < 5 " +
-           "ORDER BY o.createdAt ASC")
-    List<OutboxEvent> findUnpublishedEvents();
-
-    @Query("SELECT COUNT(o) FROM OutboxEvent o WHERE o.published = false")
-    long countUnpublished();
-
-    @Modifying
-    @Query("DELETE FROM OutboxEvent o WHERE o.published = true AND o.publishedAt < :threshold")
-    int deleteOldPublishedEvents(@Param("threshold") LocalDateTime threshold);
-}
-```
-
----
-
-**`emergency-service/src/main/java/com/vivek/emergency/service/EmergencyService.java`** *(rewritten)*
-```java
-package com.vivek.emergency.service;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.emergency.dto.EmergencyEvent;
-import com.vivek.emergency.entity.Emergency;
-import com.vivek.emergency.entity.OutboxEvent;
-import com.vivek.emergency.repository.EmergencyRepository;
-import com.vivek.emergency.repository.OutboxEventRepository;
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.Optional;
-
-@Service
-@RequiredArgsConstructor
-@Slf4j
-public class EmergencyService {
-
-    private static final String EMERGENCY_TOPIC = "emergency-topic";
-
-    private final EmergencyRepository emergencyRepository;
-    private final OutboxEventRepository outboxRepository;
-    private final ObjectMapper objectMapper;
-    private final MeterRegistry meterRegistry;
-
-    /**
-     * Saves emergency + outbox entry in ONE transaction.
-     * The OutboxPublisher will pick up the outbox entry and push to Kafka.
-     * This guarantees no emergency is ever saved to DB but silently lost from Kafka.
-     */
-    @Transactional
-    public Emergency createEmergency(EmergencyEvent event) {
-        log.info("Creating emergency: {}", event.getEmergencyId());
-
-        // Check for duplicates
-        if (emergencyRepository.findByEmergencyId(event.getEmergencyId()).isPresent()) {
-            log.warn("Duplicate emergencyId received, returning existing: {}", event.getEmergencyId());
-            return emergencyRepository.findByEmergencyId(event.getEmergencyId()).get();
-        }
-
-        // 1. Save emergency to PostgreSQL
-        Emergency emergency = new Emergency();
-        emergency.setEmergencyId(event.getEmergencyId());
-        emergency.setCoordinates(event.getLat(), event.getLon());
-        emergency.setPriority(event.getPriority());
-        emergency.setStatus("PENDING");
-        Emergency saved = emergencyRepository.save(emergency);
-
-        // 2. Write outbox entry in THE SAME TRANSACTION — atomic with the save above
-        try {
-            String payload = objectMapper.writeValueAsString(event);
-            OutboxEvent outbox = OutboxEvent.of("EMERGENCY", saved.getEmergencyId(), EMERGENCY_TOPIC, payload);
-            outboxRepository.save(outbox);
-        } catch (JsonProcessingException e) {
-            // Throwing here rolls back BOTH the emergency save and the outbox write — correct behaviour
-            throw new RuntimeException("Failed to serialize emergency event for outbox: " + event.getEmergencyId(), e);
-        }
-
-        meterRegistry.counter("emergency.created.total").increment();
-        log.info("Emergency + outbox entry saved atomically: {}", saved.getEmergencyId());
-        return saved;
-    }
-
-    @Transactional
-    public void updateStatus(String emergencyId, String status, String assignedAmbulanceId) {
-        emergencyRepository.findByEmergencyId(emergencyId).ifPresentOrElse(e -> {
-            e.setStatus(status);
-            if (assignedAmbulanceId != null) {
-                e.setAssignedAmbulanceId(assignedAmbulanceId);
-                if ("ASSIGNED".equals(status)) {
-                    e.setAssignmentTimestamp(java.time.LocalDateTime.now());
-                }
-            }
-            if ("COMPLETED".equals(status)) {
-                e.setCompletedAt(java.time.LocalDateTime.now());
-            }
-            emergencyRepository.save(e);
-            log.info("Emergency status updated: {} -> {}", emergencyId, status);
-        }, () -> log.warn("Emergency not found for status update: {}", emergencyId));
-    }
-
-    public Optional<Emergency> findByEmergencyId(String emergencyId) {
-        return emergencyRepository.findByEmergencyId(emergencyId);
-    }
-
-    public List<Emergency> findByStatus(String status) {
-        return emergencyRepository.findByStatus(status);
-    }
-
-    public List<Emergency> findPendingEmergenciesByPriority() {
-        return emergencyRepository.findPendingEmergenciesByPriority("PENDING");
-    }
-
-    public long countByStatus(String status) {
-        return emergencyRepository.countByStatus(status);
-    }
-}
-```
-
----
-
-**`emergency-service/src/main/java/com/vivek/emergency/service/OutboxPublisher.java`** *(new file)*
-```java
-package com.vivek.emergency.service;
-
-import com.vivek.emergency.entity.OutboxEvent;
-import com.vivek.emergency.repository.OutboxEventRepository;
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-
-@Service
-@RequiredArgsConstructor
-@Slf4j
-public class OutboxPublisher {
-
-    private static final int MAX_RETRIES = 5;
-
-    private final OutboxEventRepository outboxRepository;
-    private final KafkaTemplate<String, String> stringKafkaTemplate;
-    private final MeterRegistry meterRegistry;
-
-    @Scheduled(fixedDelay = 1000) // poll every second
-    @Transactional
-    public void publishPendingEvents() {
-        List<OutboxEvent> pending = outboxRepository.findUnpublishedEvents();
-        if (pending.isEmpty()) return;
-
-        log.debug("Outbox: processing {} pending events", pending.size());
-
-        for (OutboxEvent event : pending) {
-            try {
-                stringKafkaTemplate
-                    .send(event.getKafkaTopic(), event.getAggregateId(), event.getPayload())
-                    .get(5, TimeUnit.SECONDS);
-
-                event.setPublished(true);
-                event.setPublishedAt(LocalDateTime.now());
-                outboxRepository.save(event);
-
-                meterRegistry.counter("outbox.events.published.total").increment();
-                log.info("Outbox published: {} {} -> {}", event.getAggregateType(),
-                        event.getAggregateId(), event.getKafkaTopic());
-
-            } catch (Exception e) {
-                int retries = event.getRetryCount() + 1;
-                event.setRetryCount(retries);
-                event.setLastRetryAt(LocalDateTime.now());
-                event.setErrorMessage(e.getMessage());
-                outboxRepository.save(event);
-
-                meterRegistry.counter("outbox.events.failed.total").increment();
-                log.error("Outbox publish failed (attempt {}/{}): {} {}",
-                        retries, MAX_RETRIES, event.getAggregateType(), event.getAggregateId(), e);
-
-                if (retries >= MAX_RETRIES) {
-                    meterRegistry.counter("outbox.events.exhausted.total").increment();
-                    log.error("OUTBOX MAX RETRIES EXCEEDED — manual intervention required for outbox id={}  emergencyId={}",
-                            event.getId(), event.getAggregateId());
-                }
-            }
-        }
-
-        meterRegistry.gauge("outbox.events.pending.count", outboxRepository.countUnpublished());
-    }
-
-    @Scheduled(cron = "0 0 3 * * ?") // daily at 3 AM
-    @Transactional
-    public void cleanupPublishedEvents() {
-        LocalDateTime threshold = LocalDateTime.now().minusDays(7);
-        int deleted = outboxRepository.deleteOldPublishedEvents(threshold);
-        log.info("Outbox cleanup: deleted {} old published events", deleted);
-    }
-}
-```
-
----
-
-### FIX 2 — Kafka listeners no longer propagate `JsonProcessingException`
-
-**`dispatch-service/src/main/java/com/vivek/dispatch/listener/DispatchListener.java`** *(rewritten)*
-```java
-package com.vivek.dispatch.listener;
-
-import java.time.Duration;
+package com.vivek.notification.listener;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.dispatch.dto.AmbulanceLocationEvent;
-import com.vivek.dispatch.dto.CompletionEvent;
-import com.vivek.dispatch.dto.EmergencyEvent;
-import com.vivek.dispatch.service.DispatchEngine;
+import com.vivek.notification.dto.AssignmentEvent;
 
 @Component
 @Slf4j
 @RequiredArgsConstructor
-public class DispatchListener {
-
-    private final DispatchEngine dispatchEngine;
-    private final ObjectMapper objectMapper;
-    private final StringRedisTemplate redisTemplate;
-    private final MeterRegistry meterRegistry;
-
-    @KafkaListener(topics = "emergency-topic", groupId = "dispatch-group")
-    public void consumeEmergency(String message) {
-        // DO NOT propagate JsonProcessingException — Spring Kafka would retry-loop forever on bad JSON
-        try {
-            EmergencyEvent emergency = objectMapper.readValue(message, EmergencyEvent.class);
-            meterRegistry.counter("dispatch.topic.emergency.consumed.total").increment();
-            dispatchEngine.handleEmergency(emergency);
-        } catch (JsonProcessingException e) {
-            // Malformed message — log and discard. DLT handles it via KafkaDltConfig.
-            meterRegistry.counter("dispatch.topic.emergency.parse_error.total").increment();
-            log.error("Malformed emergency message — discarding (will go to DLT): {}", message, e);
-        }
-    }
-
-    @KafkaListener(topics = "ambulance-location-topic", groupId = "dispatch-group")
-    public void consumeAmbulance(String message) {
-        try {
-            AmbulanceLocationEvent ambulance = objectMapper.readValue(message, AmbulanceLocationEvent.class);
-            meterRegistry.counter("dispatch.topic.ambulance_location.consumed.total").increment();
-            dispatchEngine.handleAmbulanceUpdate(ambulance);
-        } catch (JsonProcessingException e) {
-            meterRegistry.counter("dispatch.topic.ambulance_location.parse_error.total").increment();
-            log.error("Malformed ambulance-location message — discarding: {}", message, e);
-        }
-    }
-
-    @KafkaListener(topics = "ambulance-completed-topic", groupId = "dispatch-group")
-    public void consumeCompletion(String message) {
-        try {
-            CompletionEvent completion = objectMapper.readValue(message, CompletionEvent.class);
-            String completionKey = completion.getEmergencyId() + "-" + completion.getAmbulanceId();
-            if (isDuplicate("completion", completionKey)) {
-                meterRegistry.counter("dispatch.topic.completion.duplicate.total").increment();
-                log.info("Duplicate completion ignored completionKey={}", completionKey);
-                return;
-            }
-            meterRegistry.counter("dispatch.topic.completion.consumed.total").increment();
-            dispatchEngine.markAmbulanceAvailable(completion.getAmbulanceId(), completion.getVersion());
-        } catch (JsonProcessingException e) {
-            meterRegistry.counter("dispatch.topic.completion.parse_error.total").increment();
-            log.error("Malformed completion message — discarding: {}", message, e);
-        }
-    }
-
-    private boolean isDuplicate(String type, String key) {
-        String redisKey = "idempotency:" + type + ":" + key;
-        Boolean created = redisTemplate.opsForValue().setIfAbsent(redisKey, "1", Duration.ofMinutes(10));
-        return !Boolean.TRUE.equals(created);
-    }
-}
-```
-
----
-
-**`ambulance-service/src/main/java/com/vivek/ambulance/listener/AmbulanceAssignmentListener.java`** *(fixed — no throws, fixed version sequencing with stored expectedVersions)*
-```java
-package com.vivek.ambulance.listener;
-
-import java.time.Duration;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-
-import jakarta.annotation.PreDestroy;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Component;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.ambulance.dto.AssignmentEvent;
-import com.vivek.ambulance.dto.CompletionEvent;
-import com.vivek.ambulance.model.AmbulanceStatus;
-import com.vivek.ambulance.service.AmbulanceProducer;
-import com.vivek.ambulance.service.AmbulanceStateTracker;
-import com.vivek.ambulance.service.AmbulanceMovementSimulator;
-
-@Component
-@Slf4j
-@RequiredArgsConstructor
-public class AmbulanceAssignmentListener {
+public class NotificationListener {
 
     private final ObjectMapper objectMapper;
-    private final AmbulanceProducer ambulanceProducer;
-    private final AmbulanceStateTracker ambulanceStateTracker;
-    private final AmbulanceMovementSimulator movementSimulator;
-    private final StringRedisTemplate redisTemplate;
     private final MeterRegistry meterRegistry;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
-    @KafkaListener(topics = "ambulance-assigned-topic", groupId = "ambulance-driver-group")
+    @KafkaListener(topics = "ambulance-assigned-topic", groupId = "notification-group")
     public void consumeAssignment(String message) {
-        // Never propagate JsonProcessingException — it causes infinite Kafka retry loops
-        AssignmentEvent assignment;
+        // DO NOT declare `throws Exception` — Spring Kafka retries indefinitely on any thrown exception.
+        // Malformed JSON must be caught and discarded here; KafkaDltConfig handles retryable errors.
+        AssignmentEvent event;
         try {
-            assignment = objectMapper.readValue(message, AssignmentEvent.class);
+            event = objectMapper.readValue(message, AssignmentEvent.class);
         } catch (JsonProcessingException e) {
-            meterRegistry.counter("ambulance.assignments.parse_error.total").increment();
-            log.error("Malformed assignment message — discarding: {}", message, e);
-            return;
+            meterRegistry.counter("notification.assignments.parse_error.total").increment();
+            log.error("Malformed assignment message in notification-service — discarding (goes to DLT): {}", message, e);
+            return; // discard — do not rethrow
         }
 
-        meterRegistry.counter("ambulance.assignments.consumed.total").increment();
-        String ambulanceId = assignment.getAmbulanceId();
-        String emergencyId = assignment.getEmergencyId();
-        String assignmentKey = emergencyId + "-" + ambulanceId;
-
-        if (isDuplicate("assignment", assignmentKey)) {
-            meterRegistry.counter("ambulance.assignments.duplicate.total").increment();
-            log.info("Duplicate assignment ignored assignmentKey={}", assignmentKey);
-            return;
+        try {
+            sendNotification(event);
+            meterRegistry.counter("notification.assignments.consumed.total").increment();
+            meterRegistry.counter("notification.sent.total").increment();
+            log.info("Notification dispatched emergencyId={} ambulanceId={} distanceKm={} version={}",
+                    event.getEmergencyId(), event.getAmbulanceId(),
+                    event.getDistanceKm(), event.getVersion());
+        } catch (Exception e) {
+            // Rethrow only for genuinely retryable errors (e.g. downstream SMS/push service failure).
+            // KafkaDltConfig will retry 3 times with 2s backoff, then send to DLT.
+            meterRegistry.counter("notification.consume.failures.total").increment();
+            log.error("Failed to send notification emergencyId={} — will retry via KafkaDltConfig",
+                    event.getEmergencyId(), e);
+            throw new RuntimeException("Notification send failed, triggering retry", e);
         }
-
-        AmbulanceStatus currentStatus = ambulanceStateTracker.getStatus(ambulanceId);
-        long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);
-        String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
-
-        if (currentStatus == AmbulanceStatus.ASSIGNED && emergencyId.equals(activeEmergencyId)) {
-            log.info("Duplicate assignment ignored for same incident ambulanceId={} emergencyId={}", ambulanceId, emergencyId);
-            return;
-        }
-
-        long assignedExpectedVersion = assignment.getVersion();
-        boolean assigned = ambulanceStateTracker.assignEmergencyAtomically(ambulanceId, emergencyId, assignedExpectedVersion);
-        if (!assigned) {
-            meterRegistry.counter("ambulance.assignments.rejected.total").increment();
-            log.warn("Assignment rejected by FSM ambulanceId={} emergencyId={} currentStatus={} currentVersion={} incomingVersion={}",
-                    ambulanceId, emergencyId, currentStatus, currentVersion, assignedExpectedVersion);
-            sendAssignmentAck(emergencyId, ambulanceId, "REJECTED", assignedExpectedVersion);
-            return;
-        }
-
-        // Read the ACTUAL version from Redis after atomic assignment — don't assume +1
-        long versionAfterAssign = ambulanceStateTracker.getVersion(ambulanceId);
-        sendAssignmentAck(emergencyId, ambulanceId, "ACCEPTED", versionAfterAssign);
-
-        double estimatedDurationSeconds = 0;
-        if (assignment.getEmergencyLat() != 0 && assignment.getEmergencyLon() != 0) {
-            estimatedDurationSeconds = movementSimulator.setDestination(
-                    ambulanceId, assignment.getEmergencyLat(), assignment.getEmergencyLon());
-        }
-
-        long onRouteDelay, arrivedDelay, completedDelay;
-        if (estimatedDurationSeconds > 0) {
-            onRouteDelay  = Math.max(2,  (long)(estimatedDurationSeconds * 0.10));
-            arrivedDelay  = Math.max(5,  (long)(estimatedDurationSeconds * 0.90));
-            completedDelay = (long)(estimatedDurationSeconds + 30);
-        } else {
-            var loc = movementSimulator.getCurrentLocation(ambulanceId);
-            if (loc != null && assignment.getEmergencyLat() != 0) {
-                double dist = haversineKm(loc.lat, loc.lon, assignment.getEmergencyLat(), assignment.getEmergencyLon());
-                long estSec = Math.max(60, (long)(dist / 30.0 * 3600));
-                onRouteDelay  = Math.max(5,  (long)(estSec * 0.10));
-                arrivedDelay  = Math.max(30, (long)(estSec * 0.90));
-                completedDelay = estSec + 30;
-            } else {
-                onRouteDelay = 5; arrivedDelay = 60; completedDelay = 120;
-            }
-        }
-
-        log.info("Scheduled transitions for {}: ON_ROUTE in {}s, ARRIVED in {}s, COMPLETED in {}s",
-                ambulanceId, onRouteDelay, arrivedDelay, completedDelay);
-
-        // FIX: Read version fresh from Redis inside each lambda instead of pre-computing offsets.
-        // Pre-computing (version+1, version+2, version+3) breaks if any external event changes
-        // the version before the scheduled task fires (auto-heal, race condition, etc.)
-        scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ON_ROUTE, emergencyId),
-                onRouteDelay, TimeUnit.SECONDS);
-        scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ARRIVED, emergencyId),
-                arrivedDelay, TimeUnit.SECONDS);
-        scheduler.schedule(() -> completeTrip(assignment, emergencyId),
-                completedDelay, TimeUnit.SECONDS);
     }
 
     /**
-     * Reads current version from Redis at execution time — safe against version drift
-     * from auto-heal or other concurrent events between scheduling and execution.
+     * Notification dispatch stub.
+     * Replace with real SMS/push/webhook logic in production.
+     * Throwing here intentionally triggers Kafka retry (unlike parse errors above).
      */
-    private void safeTransition(String ambulanceId, AmbulanceStatus targetStatus, String emergencyId) {
-        long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);
-        AmbulanceStatus currentStatus = ambulanceStateTracker.getStatus(ambulanceId);
-
-        // Guard: only transition if ambulance is still serving this emergency
-        String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
-        if (!emergencyId.equals(activeEmergencyId)) {
-            log.warn("Skipping {} transition for {} — activeEmergency mismatch (expected={} actual={})",
-                    targetStatus, ambulanceId, emergencyId, activeEmergencyId);
-            return;
-        }
-
-        boolean ok = ambulanceStateTracker.transition(ambulanceId, targetStatus, currentVersion);
-        if (!ok) {
-            log.warn("Transition to {} failed for {} at version {} (currentStatus={}). " +
-                            "Auto-heal will recover if stuck.",
-                    targetStatus, ambulanceId, currentVersion, currentStatus);
-        }
-    }
-
-    private void completeTrip(AssignmentEvent assignment, String emergencyId) {
-        String ambulanceId = assignment.getAmbulanceId();
-
-        String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
-        if (!emergencyId.equals(activeEmergencyId)) {
-            log.warn("Skipping COMPLETED transition for {} — activeEmergency mismatch", ambulanceId);
-            return;
-        }
-
-        long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);
-        boolean completed = ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.COMPLETED, currentVersion);
-        if (!completed) {
-            log.warn("COMPLETED transition failed for {} — auto-heal will recover", ambulanceId);
-            return;
-        }
-
-        long completionVersion = ambulanceStateTracker.getVersion(ambulanceId);
-        CompletionEvent completion = new CompletionEvent(ambulanceId, assignment.getEmergencyId(),
-                "COMPLETED", completionVersion);
-        ambulanceProducer.sendCompletion(completion);
-        meterRegistry.counter("ambulance.completions.published.total").increment();
-        redisTemplate.delete(activeEmergencyKey(ambulanceId));
-        movementSimulator.clearDestination(ambulanceId);
-
-        // Immediately transition back to AVAILABLE
-        boolean available = ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.AVAILABLE, completionVersion);
-        if (!available) {
-            log.warn("AVAILABLE transition failed for {} after completion — auto-heal will recover", ambulanceId);
-        }
-
-        log.info("Trip completed ambulanceId={} emergencyId={}", ambulanceId, assignment.getEmergencyId());
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        scheduler.shutdown();
-    }
-
-    private boolean isDuplicate(String type, String key) {
-        String redisKey = "idempotency:" + type + ":" + key;
-        Boolean created = redisTemplate.opsForValue().setIfAbsent(redisKey, "1", Duration.ofMinutes(10));
-        return !Boolean.TRUE.equals(created);
-    }
-
-    private String activeEmergencyKey(String ambulanceId) {
-        return "ambulance:" + ambulanceId + ":activeEmergencyId";
-    }
-
-    private void sendAssignmentAck(String emergencyId, String ambulanceId, String status, long version) {
-        try {
-            ambulanceProducer.sendAcknowledgment("ambulance-assignment-ack-topic",
-                    emergencyId, ambulanceId, status, version);
-            log.info("ACK sent emergencyId={} ambulanceId={} status={}", emergencyId, ambulanceId, status);
-        } catch (Exception e) {
-            log.error("Failed to send ACK emergencyId={} ambulanceId={}", emergencyId, ambulanceId, e);
-        }
-    }
-
-    private double haversineKm(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371;
-        double dLat = Math.toRadians(lat2 - lat1);
-        double dLon = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(dLat/2) * Math.sin(dLat/2)
-                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                 * Math.sin(dLon/2) * Math.sin(dLon/2);
-        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    private void sendNotification(AssignmentEvent event) {
+        // TODO: integrate with Twilio / FCM / webhook
+        log.info("[STUB] Would send SMS/push to caller: emergencyId={} ambulanceId={} eta={}km",
+                event.getEmergencyId(), event.getAmbulanceId(), event.getDistanceKm());
     }
 }
 ```
 
 ---
 
-### FIX 3 — `requeueEmergency` actually re-enqueues the emergency
+### FILE 2 — `tracking-service/src/main/java/com/vivek/tracking/listener/TrackingLocationListener.java`
 
-**`dispatch-service/src/main/java/com/vivek/dispatch/service/DispatchEngine.java`** — replace only the `requeueEmergency` method and add `requeueWithPayload`:
+**Problem:** `throws JsonProcessingException` propagates out of the `@KafkaListener`, causing Spring Kafka to retry every bad-JSON message infinitely until it hits the DLT retry limit — burning cycles on something that will never succeed.
 
 ```java
-// In DispatchEngine.java — replace the requeueEmergency method
+package com.vivek.tracking.listener;
 
-/**
- * Called when an assignment ACK comes back REJECTED.
- * Clears the idempotency key AND re-pushes the emergency back onto its priority queue
- * so it gets dispatched to a different ambulance.
- * Previously this only deleted the idempotency key, leaving the emergency orphaned.
- */
-public void requeueEmergency(String emergencyId) {
-    // 1. Remove idempotency key so re-processing is allowed
-    String idempotencyKey = "idempotency:emergency:" + emergencyId;
-    redisTemplate.delete(idempotencyKey);
-
-    // 2. Also clear the ambulance status that was pre-set to ASSIGNED by dispatch
-    //    (The ambulance FSM rejected the assignment, so it's still AVAILABLE in its own Redis,
-    //     but the dispatch-service set ambulance:X:status=ASSIGNED optimistically — roll it back)
-    String ackKey = "assignment:ack:" + emergencyId;
-    redisTemplate.delete(ackKey);
-
-    // 3. Look up the original emergency payload from the pending queue or reconstruct from DB
-    //    We store a copy keyed by emergencyId at enqueue time for exactly this requeue scenario
-    String payloadKey = "emergency:payload:" + emergencyId;
-    String savedPayload = redisTemplate.opsForValue().get(payloadKey);
-
-    if (savedPayload == null) {
-        log.error("Cannot requeue emergencyId={} — payload not found in Redis. " +
-                  "Emergency may be lost! Check PostgreSQL emergencies table for manual recovery.", emergencyId);
-        meterRegistry.counter("dispatch.emergencies.requeue.lost.total").increment();
-        return;
-    }
-
-    try {
-        EmergencyEvent event = objectMapper.readValue(savedPayload, EmergencyEvent.class);
-        enqueueEmergency(event);
-        meterRegistry.counter("dispatch.emergencies.requeued.total").increment();
-        log.info("Emergency re-queued after rejection emergencyId={} priority={}", emergencyId, event.getPriority());
-    } catch (JsonProcessingException e) {
-        log.error("Failed to deserialize saved payload for requeue emergencyId={}", emergencyId, e);
-        meterRegistry.counter("dispatch.emergencies.requeue.lost.total").increment();
-    }
-}
-
-// Also update enqueueEmergency to store a payload copy for requeue safety:
-private void enqueueEmergency(EmergencyEvent emergency) {
-    try {
-        String payload = objectMapper.writeValueAsString(emergency);
-        redisTemplate.opsForList().rightPush(queueKey(emergency.getPriority()), payload);
-
-        // Store a copy keyed by emergencyId — used if we need to requeue after a REJECTED ACK
-        redisTemplate.opsForValue().set(
-            "emergency:payload:" + emergency.getEmergencyId(),
-            payload,
-            Duration.ofHours(2)  // TTL: longer than any reasonable dispatch cycle
-        );
-    } catch (JsonProcessingException e) {
-        log.error("Emergency enqueue serialization failed emergencyId={}", emergency.getEmergencyId(), e);
-    }
-}
-```
-
----
-
-### FIX 4 — Remove `synchronized` from non-atomic Redis methods in `AmbulanceStateTracker`
-
-**`ambulance-service/.../service/AmbulanceStateTracker.java`** — replace the `transition` method signature:
-
-```java
-// BEFORE (false safety — synchronized only protects within one JVM instance):
-public synchronized boolean transition(String ambulanceId, AmbulanceStatus nextStatus, long expectedVersion) {
-
-// AFTER — remove synchronized, use the same Lua-script approach as assignEmergencyAtomically:
-public boolean transition(String ambulanceId, AmbulanceStatus nextStatus, long expectedVersion) {
-    ensureStateExists(ambulanceId);
-
-    // Use a Lua script for true atomicity — works across multiple service instances
-    String script = """
-            local statusKey    = KEYS[1]
-            local versionKey   = KEYS[2]
-            local lastUpdKey   = KEYS[3]
-
-            local expectedVer  = tonumber(ARGV[1])
-            local nextStatus   = ARGV[2]
-            local now          = ARGV[3]
-
-            local versionRaw = redis.call('GET', versionKey)
-            if not versionRaw then return -3 end
-            local version = tonumber(versionRaw)
-            if version ~= expectedVer then return -1 end
-
-            redis.call('SET', statusKey,  nextStatus)
-            redis.call('SET', versionKey, tostring(version + 1))
-            redis.call('SET', lastUpdKey, now)
-            return version + 1
-            """;
-
-    DefaultRedisScript<Long> redisScript = new DefaultRedisScript<>();
-    redisScript.setScriptText(script);
-    redisScript.setResultType(Long.class);
-
-    Long result = redisTemplate.execute(redisScript,
-            java.util.List.of(statusKey(ambulanceId), versionKey(ambulanceId), lastUpdatedKey(ambulanceId)),
-            String.valueOf(expectedVersion),
-            nextStatus.name(),
-            String.valueOf(System.currentTimeMillis()));
-
-    if (result == null || result < 0) {
-        meterRegistry.counter("ambulance.fsm.transition.failures.total",
-                "reason", result == null ? "null" : (result == -1 ? "version_mismatch" : "unknown_ambulance")).increment();
-        log.warn("Transition rejected ambulanceId={} to={} expectedVersion={} result={}",
-                ambulanceId, nextStatus, expectedVersion, result);
-        return false;
-    }
-
-    meterRegistry.counter("ambulance.fsm.transitions.total", "to_status", nextStatus.name()).increment();
-    log.info("Transition applied ambulanceId={} toStatus={} newVersion={}", ambulanceId, nextStatus, result);
-    return true;
-}
-```
-
----
-
-### FIX 5 — Actuator not fully exposed in API Gateway
-
-**`api-gateway/src/main/resources/application.yml`** — replace the management block:
-```yaml
-management:
-  endpoints:
-    web:
-      exposure:
-        # NEVER expose '*' — /actuator/env leaks secrets, /actuator/shutdown kills the service
-        include: "health,info,prometheus,metrics"
-  endpoint:
-    health:
-      show-details: when-authorized   # don't expose full health details publicly
-  metrics:
-    tags:
-      application: ${spring.application.name}
-```
-
----
-
-### FIX 6 — CORS supports local dev via Spring profiles
-
-**`api-gateway/src/main/java/com/vivek/api_gateway/config/CorsConfig.java`** *(rewritten)*
-```java
-package com.vivek.api_gateway.config;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.reactive.CorsWebFilter;
-import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
-import java.util.List;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vivek.tracking.dto.AmbulanceLocationEvent;
+import com.vivek.tracking.service.TrackingCacheService;
 
-@Configuration
-public class CorsConfig {
+@Component
+@Slf4j
+@RequiredArgsConstructor
+public class TrackingLocationListener {
 
-    // Set via environment variable or application.yml per profile.
-    // Default covers both local dev and the production Render deployment.
-    @Value("${cors.allowed-origins:http://localhost:3000,http://localhost:3001,https://mobile-driver-app.onrender.com}")
-    private String allowedOriginsRaw;
+    private final ObjectMapper objectMapper;
+    private final TrackingCacheService trackingCacheService;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final MeterRegistry meterRegistry;
 
-    @Bean
-    public CorsWebFilter corsWebFilter() {
-        List<String> origins = Arrays.asList(allowedOriginsRaw.split(","));
+    @Value("${tracking.listener.log.enabled:true}")
+    private boolean logEnabled;
 
-        CorsConfiguration corsConfig = new CorsConfiguration();
-        corsConfig.setAllowedOrigins(origins);
-        corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        corsConfig.setAllowedHeaders(List.of("*"));
-        corsConfig.setAllowCredentials(true);
-        corsConfig.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", corsConfig);
-        return new CorsWebFilter(source);
-    }
-}
-```
-
-And in `api-gateway/src/main/resources/application.yml` add:
-```yaml
-cors:
-  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001,https://mobile-driver-app.onrender.com}
-```
-
----
-
-### FIX 7 — Fix `AmbulanceMovementSimulator` initialization + recursion
-
-**`ambulance-service/.../service/AmbulanceMovementSimulator.java`** — two targeted fixes:
-
-```java
-// FIX A: Move initialization out of the @Scheduled loop into @PostConstruct
-// BEFORE:
-@Scheduled(fixedRate = 1000)
-public void updateAmbulanceLocations() {
-    initializeAmbulance("AMB-101", 18.5204, 73.8567);  // called 86,400x/day needlessly
-    ...
-}
-
-// AFTER:
-@PostConstruct
-public void initializeFleet() {
-    initializeAmbulance("AMB-101", 18.5204, 73.8567);
-    initializeAmbulance("AMB-102", 18.5300, 73.8600);
-    initializeAmbulance("AMB-103", 18.5100, 73.8500);
-}
-
-@Scheduled(fixedRate = 1000)
-public void updateAmbulanceLocations() {
-    for (String ambulanceId : currentLocations.keySet()) {
-        updateAmbulance(ambulanceId);
-    }
-}
-```
-
-```java
-// FIX B: Replace recursion in moveAlongRoute with a while-loop
-// BEFORE (risks StackOverflow on dense waypoints):
-} else {
-    currentWaypointIndex.put(ambulanceId, waypointIdx + 1);
-    moveAlongRoute(ambulanceId, current, waypoints); // recursive
-}
-
-// AFTER:
-private void moveAlongRoute(String ambulanceId, Location current, List<double[]> waypoints) {
-    // Iterative — no recursion risk regardless of waypoint density
-    while (true) {
-        Integer waypointIdx = currentWaypointIndex.getOrDefault(ambulanceId, 0);
-
-        if (waypointIdx >= waypoints.size()) {
-            double[] last = waypoints.get(waypoints.size() - 1);
-            current.lat = last[0];
-            current.lon = last[1];
-            publishLocation(ambulanceId, current.lat, current.lon, 0.0, 0.0);
-            lastBroadcastTime.put(ambulanceId, System.currentTimeMillis());
-            log.info("Ambulance {} reached end of route", ambulanceId);
-            return;
+    @KafkaListener(topics = "ambulance-location-topic", groupId = "tracking-group")
+    public void consumeAmbulanceLocation(String message) {
+        // DO NOT declare `throws JsonProcessingException`.
+        // Bad JSON on a high-frequency location topic (every 1-3s per ambulance) would cause
+        // a storm of retries + DLT writes. Parse errors must be discarded immediately.
+        AmbulanceLocationEvent event;
+        try {
+            event = objectMapper.readValue(message, AmbulanceLocationEvent.class);
+        } catch (JsonProcessingException e) {
+            meterRegistry.counter("tracking.location.parse_error.total").increment();
+            log.error("Malformed location message in tracking-service — discarding: {}", message, e);
+            return; // discard — do not retry bad JSON
         }
 
-        double[] target = waypoints.get(waypointIdx);
-        double latDiff = target[0] - current.lat;
-        double lonDiff = target[1] - current.lon;
-        double distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff);
+        // Cache latest position in Redis (or in-memory fallback)
+        try {
+            trackingCacheService.saveLatest(event);
+        } catch (Exception e) {
+            // Cache failure is non-fatal — we can still broadcast to WebSocket clients
+            meterRegistry.counter("tracking.cache.save_error.total").increment();
+            log.warn("Failed to cache location for ambulanceId={} — WebSocket broadcast will still proceed",
+                    event.getAmbulanceId(), e);
+        }
 
-        if (distance > MOVEMENT_SPEED) {
-            double ratio = MOVEMENT_SPEED / distance;
-            current.lat += latDiff * ratio;
-            current.lon += lonDiff * ratio;
+        // Broadcast to all connected WebSocket clients
+        try {
+            messagingTemplate.convertAndSend("/topic/location", event);
+            meterRegistry.counter("tracking.websocket.broadcast.total").increment();
+        } catch (Exception e) {
+            // WebSocket failure is also non-fatal — don't fail the Kafka consumer over it
+            meterRegistry.counter("tracking.websocket.broadcast_error.total").increment();
+            log.warn("WebSocket broadcast failed for ambulanceId={}", event.getAmbulanceId(), e);
+        }
 
-            double heading = Math.toDegrees(Math.atan2(lonDiff, latDiff));
-            if (heading < 0) heading += 360;
-            double speed = 40.0 + (Math.random() * 20);
+        meterRegistry.counter("tracking.location.consumed.total").increment();
 
-            long now = System.currentTimeMillis();
-            Long last = lastBroadcastTime.get(ambulanceId);
-            if (last == null || (now - last) >= MOVING_BROADCAST_INTERVAL) {
-                publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
-                lastBroadcastTime.put(ambulanceId, now);
-            }
-            return; // done for this tick
-        } else {
-            // Reached waypoint — advance and loop without recursing
-            current.lat = target[0];
-            current.lon = target[1];
-            currentWaypointIndex.put(ambulanceId, waypointIdx + 1);
-            log.info("Ambulance {} reached waypoint {}/{}", ambulanceId, waypointIdx + 1, waypoints.size());
-            // loop continues to next waypoint
+        if (logEnabled) {
+            log.debug("Location processed ambulanceId={} lat={} lon={}",
+                    event.getAmbulanceId(), event.getLatitude(), event.getLongitude());
         }
     }
 }
@@ -900,40 +159,295 @@ private void moveAlongRoute(String ambulanceId, Location current, List<double[]>
 
 ---
 
-### FIX 8 — Credentials out of `docker-compose.yml`
+### FILE 3 — `docker-compose.yml` (complete replacement)
 
-Create a `.env` file (add to `.gitignore`!) and reference it in compose:
+**Problems fixed:**
+- `notification-service` and `tracking-service` missing `networks: - dispatch-network` → they can't reach Kafka or Redis by hostname
+- `api-gateway` missing `networks` → can't reach any backend service by hostname
+- `prometheus`, `grafana`, `renderer`, `tracking-client` missing `networks` → Prometheus can't scrape services
+- Hardcoded credentials replaced with `.env` variables
+- Hardcoded `CLUSTER_ID` replaced with env var
+- `KAFKA_ADVERTISED_LISTENERS` fixed from `localhost:9092` to `kafka:9092` for inter-container communication
+- `tracking-service` uses wrong env var name (`SPRING_DATA_REDIS_HOST` vs what `application.yml` expects as `REDIS_HOST`)
 
-**`.env`** *(new file — add to `.gitignore`)*
-```env
-POSTGRES_USER=dispatch_user
-POSTGRES_PASSWORD=change_me_in_production
-POSTGRES_DB=emergency_dispatch
-KAFKA_CLUSTER_ID=your-unique-cluster-id-here
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
-```
-
-**`docker-compose.yml`** — replace the hardcoded creds:
 ```yaml
+version: '3.8'
+
+services:
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      # FIX: was localhost:9092 — other containers must reach Kafka by hostname "kafka", not "localhost"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    networks:
+      - dispatch-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - dispatch-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   postgres:
+    image: postgis/postgis:15-3.3
+    container_name: postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    networks:
+      - dispatch-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   emergency-service:
+    build: ./emergency-service
+    container_name: emergency-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
     environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      # ... same for other services
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    networks:
+      - dispatch-network
+    restart: on-failure
 
-  kafka:
+  dispatch-service:
+    build: ./dispatch-service
+    container_name: dispatch-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
     environment:
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+  ambulance-service:
+    build: ./ambulance-service
+    container_name: ambulance-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # FIX: was missing — without this, "kafka" hostname is unresolvable inside notification-service
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+  tracking-service:
+    build: ./tracking-service
+    container_name: tracking-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # FIX: tracking-service application.yml uses REDIS_HOST / REDIS_PORT, not SPRING_DATA_REDIS_*
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    # FIX: was missing — without this, "kafka" and "redis" hostnames are unresolvable
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    depends_on:
+      - emergency-service
+      - dispatch-service
+      - ambulance-service
+      - tracking-service
+      - notification-service
+    ports:
+      - "8080:8080"
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      EMERGENCY_SERVICE_URL: http://emergency-service:8081
+      AMBULANCE_SERVICE_URL: http://ambulance-service:8082
+      DISPATCH_SERVICE_URL: http://dispatch-service:8083
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      TRACKING_SERVICE_URL: http://tracking-service:8085
+    # FIX: was missing — without this, gateway can't reach any backend service by hostname
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # FIX: was missing — Prometheus needs to reach service actuator endpoints by hostname
+    networks:
+      - dispatch-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"  # FIX: was 3000:3000 — conflicts with tracking-client on port 3000
+    environment:
+      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
+      - GF_LOG_FILTERS=rendering:debug
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    depends_on:
+      - prometheus
+      - renderer
+    networks:
+      - dispatch-network
+    restart: unless-stopped
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: grafana-renderer
+    networks:
+      - dispatch-network
+    restart: unless-stopped
+
+  tracking-client:
+    build: ./tracking-client
+    container_name: tracking-client
+    depends_on:
+      - tracking-service
+    ports:
+      - "3000:80"
+    networks:
+      - dispatch-network
+    restart: on-failure
+
+volumes:
+  kafka_data:
+  postgres_data:
+
+networks:
+  dispatch-network:
+    driver: bridge
 ```
 
-**`.gitignore`** — add:
+---
+
+### FILE 4 — `.env` *(new file — add to `.gitignore`)*
+
+```env
+# ─── PostgreSQL ───────────────────────────────────────────────
+POSTGRES_DB=emergency_dispatch
+POSTGRES_USER=dispatch_user
+POSTGRES_PASSWORD=change_me_before_deploying
+
+# ─── Kafka ────────────────────────────────────────────────────
+# Generate a fresh ID with: docker run --rm confluentinc/cp-kafka:7.6.0 kafka-storage random-uuid
+KAFKA_CLUSTER_ID=replace-with-your-own-uuid
+
+# ─── CORS ─────────────────────────────────────────────────────
+# Comma-separated. Add your deployed frontend URL here.
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://mobile-driver-app.onrender.com
+
+# ─── Grafana ──────────────────────────────────────────────────
+GRAFANA_PASSWORD=change_me_before_deploying
 ```
+
+And add to your `.gitignore`:
+```
+# Secrets — never commit these
 .env
 *.env
 !.env.example
@@ -941,18 +455,11 @@ CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
 
 ---
 
-### Summary of what changed and why
+### Summary of what was actually wrong in these 4 files
 
-| File | What changed | Why |
-|---|---|---|
-| `EmergencyService.java` | Outbox write in same `@Transactional` as DB save | Fixes dual-write data loss |
-| `OutboxEvent.java` + `OutboxEventRepository.java` | New | Required for outbox pattern |
-| `OutboxPublisher.java` | New background publisher with retry + cleanup | Replaces fire-and-forget Kafka send |
-| `DispatchListener.java` | Catches `JsonProcessingException` internally | Prevents infinite Kafka retry loop |
-| `AmbulanceAssignmentListener.java` | No throws, reads version fresh in lambdas, guard on `activeEmergencyId` | Fixes silent transition failures + infinite retry |
-| `DispatchEngine.requeueEmergency()` | Saves payload at enqueue, restores it on requeue | Fixes orphaned emergency bug |
-| `AmbulanceStateTracker.transition()` | Replaced `synchronized` + multi-setters with Lua script | Fixes false atomicity across JVM instances |
-| `application.yml` (api-gateway) | Restricted Actuator to safe endpoints | Prevents secrets/shutdown exposure |
-| `CorsConfig.java` | Origins loaded from config, supports local dev | Unblocks local development |
-| `AmbulanceMovementSimulator.java` | `@PostConstruct` init, iterative `moveAlongRoute` | Fixes wasteful re-init + stack overflow risk |
-| `docker-compose.yml` + `.env` | Credentials in `.env` | Removes secrets from version control |
+| # | File | Root cause | Effect if unfixed |
+|---|---|---|---|
+| 1 | `NotificationListener` | `throws Exception` declared + re-thrown | Every bad JSON message retries 3× then DLTs, consuming Kafka quota on unrecoverable errors |
+| 2 | `TrackingLocationListener` | `throws JsonProcessingException` declared | Same retry storm — on a high-frequency topic (every 1-3s per ambulance) this is especially damaging |
+| 3 | `docker-compose.yml` | `notification-service`, `tracking-service`, `api-gateway`, `prometheus` missing `networks: - dispatch-network` | Containers start fine but all hostname lookups (e.g. `kafka:9092`, `redis:6379`) fail with `UnknownHostException` at runtime; `KAFKA_ADVERTISED_LISTENERS: localhost:9092` makes Kafka unreachable inside the Docker network |
+| 4 | `.env` | Credentials hardcoded in `docker-compose.yml` | Secrets in version control; all envs share the same DB password and Kafka cluster ID |
