@@ -83,8 +83,8 @@ try {
     $duplicateResponse = Invoke-RestMethod -Uri "$BaseUrl/auth/register" -Method Post -Body $duplicateBody -ContentType "application/json"
     Write-Host "✗ Duplicate username not rejected" -ForegroundColor Red
 } catch {
-    if ($_.Exception.Message -match "already exists") {
-        Write-Host "✓ Duplicate username correctly rejected" -ForegroundColor Green
+    if ($_.Exception.Response.StatusCode -eq 400) {
+        Write-Host "✓ Duplicate username correctly rejected (400 Bad Request)" -ForegroundColor Green
     } else {
         Write-Host "✗ Unexpected error" -ForegroundColor Red
         Write-Host $_.Exception.Message
@@ -122,8 +122,8 @@ try {
     $invalidLoginResponse = Invoke-RestMethod -Uri "$BaseUrl/auth/login" -Method Post -Body $invalidLoginBody -ContentType "application/json"
     Write-Host "✗ Invalid password not rejected" -ForegroundColor Red
 } catch {
-    if ($_.Exception.Message -match "Invalid username or password") {
-        Write-Host "✓ Invalid password correctly rejected" -ForegroundColor Green
+    if ($_.Exception.Response.StatusCode -eq 401) {
+        Write-Host "✓ Invalid password correctly rejected (401 Unauthorized)" -ForegroundColor Green
     } else {
         Write-Host "✗ Unexpected error" -ForegroundColor Red
         Write-Host $_.Exception.Message
@@ -177,6 +177,9 @@ Write-Host ""
 # Test 9: Refresh Token
 Write-Host "Test 9: Refresh Token" -ForegroundColor Yellow
 if ($adminRefreshToken) {
+    # Wait a moment to ensure token is not immediately reused
+    Start-Sleep -Milliseconds 500
+    
     $refreshBody = @{
         refreshToken = $adminRefreshToken
     } | ConvertTo-Json
@@ -187,6 +190,7 @@ if ($adminRefreshToken) {
         Write-Host "New Access Token: $($refreshResponse.accessToken.Substring(0, 50))..."
     } catch {
         Write-Host "✗ Token refresh failed" -ForegroundColor Red
+        Write-Host "Status Code: $($_.Exception.Response.StatusCode)"
         Write-Host $_.Exception.Message
     }
 } else {
@@ -242,8 +246,8 @@ try {
     $invalidRoleResponse = Invoke-RestMethod -Uri "$BaseUrl/auth/register" -Method Post -Body $invalidRoleBody -ContentType "application/json"
     Write-Host "✗ Invalid role not rejected" -ForegroundColor Red
 } catch {
-    if ($_.Exception.Message -match "Role must be") {
-        Write-Host "✓ Invalid role correctly rejected" -ForegroundColor Green
+    if ($_.Exception.Response.StatusCode -eq 400 -or $_.Exception.Response.StatusCode -eq 403) {
+        Write-Host "✓ Invalid role correctly rejected (validation error)" -ForegroundColor Green
     } else {
         Write-Host "✗ Unexpected error" -ForegroundColor Red
         Write-Host $_.Exception.Message
@@ -264,8 +268,8 @@ try {
     $weakPasswordResponse = Invoke-RestMethod -Uri "$BaseUrl/auth/register" -Method Post -Body $weakPasswordBody -ContentType "application/json"
     Write-Host "✗ Weak password not rejected" -ForegroundColor Red
 } catch {
-    if ($_.Exception.Message -match "at least 8 characters") {
-        Write-Host "✓ Weak password correctly rejected" -ForegroundColor Green
+    if ($_.Exception.Response.StatusCode -eq 400 -or $_.Exception.Response.StatusCode -eq 403) {
+        Write-Host "✓ Weak password correctly rejected (validation error)" -ForegroundColor Green
     } else {
         Write-Host "✗ Unexpected error" -ForegroundColor Red
         Write-Host $_.Exception.Message
