@@ -74,6 +74,11 @@ class DispatchEngineRequeueTest {
                 osrmService,
                 historyService
             );
+            
+            // Manually call @PostConstruct method to initialize metrics
+            java.lang.reflect.Method initMethod = DispatchEngine.class.getDeclaredMethod("initializeMetrics");
+            initMethod.setAccessible(true);
+            initMethod.invoke(dispatchEngine);
         } catch (Exception e) {
             throw new RuntimeException("Failed to create DispatchEngine for testing", e);
         }
