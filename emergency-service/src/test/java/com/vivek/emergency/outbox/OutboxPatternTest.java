@@ -1,5 +1,6 @@
 package com.vivek.emergency.outbox;
 
+import com.vivek.emergency.config.TestKafkaConfig;
 import com.vivek.emergency.dto.EmergencyEvent;
 import com.vivek.emergency.entity.Emergency;
 import com.vivek.emergency.entity.OutboxEvent;
@@ -12,7 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -41,6 +42,7 @@ import static org.mockito.Mockito.*;
 @SpringBootTest
 @ActiveProfiles("test")
 @DirtiesContext
+@Import(TestKafkaConfig.class)
 class OutboxPatternTest {
 
     @Autowired private EmergencyService emergencyService;
@@ -48,13 +50,15 @@ class OutboxPatternTest {
     @Autowired private OutboxEventRepository outboxRepository;
     @Autowired private OutboxPublisher outboxPublisher;
 
-    // Mock KafkaTemplate so tests control whether Kafka "succeeds" or "fails"
-    @MockitoBean private KafkaTemplate<String, Object> kafkaTemplate;
+    // Inject the mock KafkaTemplate from TestKafkaConfig
+    @Autowired private KafkaTemplate<String, Object> kafkaTemplate;
 
     @BeforeEach
     void setUp() {
         outboxRepository.deleteAll();
         emergencyRepository.deleteAll();
+        // Reset the mock to clear any previous interactions
+        reset(kafkaTemplate);
     }
 
     // ── Test 1: Atomicity ─────────────────────────────────────────────────

@@ -1,15 +1,16 @@
 package com.vivek.emergency.listener;
 
+import com.vivek.emergency.config.TestKafkaConfig;
 import com.vivek.emergency.service.EmergencyService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -32,11 +33,11 @@ import static org.mockito.Mockito.*;
 @SpringBootTest
 @ActiveProfiles("test")
 @DirtiesContext
+@Import(TestKafkaConfig.class)
 class KafkaListenerExceptionHandlingTest {
 
     @Autowired private EmergencyStatusListener emergencyStatusListener;
     @MockitoBean  private EmergencyService emergencyService;
-    @MockitoBean  private KafkaTemplate<String, Object> kafkaTemplate;
     @Autowired private MeterRegistry meterRegistry;
 
     // ── Assignment listener ───────────────────────────────────────────────

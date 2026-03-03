@@ -1,14 +1,14 @@
 package com.vivek.emergency.integration;
 
+import com.vivek.emergency.config.TestKafkaConfig;
 import com.vivek.emergency.dto.EmergencyEvent;
 import com.vivek.emergency.entity.Emergency;
 import com.vivek.emergency.repository.EmergencyRepository;
-import com.vivek.emergency.service.EmergencyProducer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@Import(TestKafkaConfig.class)
 class EmergencyIntegrationTest {
 
     @Autowired
@@ -27,9 +28,6 @@ class EmergencyIntegrationTest {
 
     @Autowired
     private EmergencyRepository emergencyRepository;
-
-    @MockitoBean
-    private EmergencyProducer emergencyProducer;
 
     @BeforeEach
     void setUp() {

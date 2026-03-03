@@ -3,6 +3,11 @@ spring:
     exclude:
       - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
   
+  kafka:
+    # Disable Kafka listeners for tests
+    listener:
+      auto-startup: false
+  
   datasource:
     url: jdbc:h2:mem:testdb
     driver-class-name: org.h2.Driver
