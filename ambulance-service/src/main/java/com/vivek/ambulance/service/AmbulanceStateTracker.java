@@ -12,7 +12,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
-import com.vivek.ambulance.model.AmbulanceState;
 import com.vivek.ambulance.model.AmbulanceStatus;
 
 import lombok.RequiredArgsConstructor;
@@ -188,20 +187,6 @@ public class AmbulanceStateTracker {
 		}
 	}
 
-	private boolean isValidTransition(AmbulanceStatus current, AmbulanceStatus next) {
-		if (current == null) {
-			return false;
-		}
-
-		return switch (current) {
-		case AVAILABLE -> next == AmbulanceStatus.ASSIGNED;
-		case ASSIGNED -> next == AmbulanceStatus.ON_ROUTE;
-		case ON_ROUTE -> next == AmbulanceStatus.ARRIVED;
-		case ARRIVED -> next == AmbulanceStatus.COMPLETED;
-		case COMPLETED -> next == AmbulanceStatus.AVAILABLE;
-		};
-	}
-
 	public boolean isAvailable(String ambulanceId) {
 		ensureStateExists(ambulanceId);
 		return getStatus(ambulanceId) == AmbulanceStatus.AVAILABLE;
@@ -229,15 +214,6 @@ public class AmbulanceStateTracker {
 		return version == null ? -1 : Long.parseLong(version);
 	}
 
-	private AmbulanceState getState(String ambulanceId) {
-		AmbulanceStatus status = getStatus(ambulanceId);
-		long version = getVersion(ambulanceId);
-		if (status == null || version < 0) {
-			return null;
-		}
-		return new AmbulanceState(status, version);
-	}
-
 	private String versionKey(String ambulanceId) {
 		return "ambulance:" + ambulanceId + ":version";
 	}
@@ -260,7 +236,7 @@ public class AmbulanceStateTracker {
 		redisTemplate.opsForValue().setIfAbsent(lastUpdatedKey(ambulanceId), String.valueOf(System.currentTimeMillis()));
 	}
 
-	private void healIfStuck(String ambulanceId) {
+	public void healIfStuck(String ambulanceId) {
 		AmbulanceStatus status = getStatus(ambulanceId);
 		if (status == null || status == AmbulanceStatus.AVAILABLE || status == AmbulanceStatus.COMPLETED) {
 			return;
