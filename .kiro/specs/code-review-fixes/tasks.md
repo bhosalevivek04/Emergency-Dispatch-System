@@ -107,17 +107,17 @@
 ## Phase 2: Security & Configuration (Priority 2)
 
 ### Task 2.1: Externalize Credentials to .env File
-**Status**: pending
+**Status**: completed
 **Priority**: high
 **Estimated Effort**: 1 hour
 
 **Subtasks**:
-- [ ] Create .env file with POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, KAFKA_CLUSTER_ID
-- [ ] Create .env.example template with placeholder values
-- [ ] Modify docker-compose.yml to reference ${POSTGRES_PASSWORD}, ${KAFKA_CLUSTER_ID}
-- [ ] Add .env to .gitignore (keep .env.example tracked)
-- [ ] Update README with instructions to copy .env.example to .env
-- [ ] Test: docker-compose up with .env file → services connect successfully
+- [x] Create .env file with POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, KAFKA_CLUSTER_ID
+- [x] Create .env.example template with placeholder values
+- [x] Modify docker-compose.yml to reference ${POSTGRES_PASSWORD}, ${KAFKA_CLUSTER_ID}
+- [x] Add .env to .gitignore (keep .env.example tracked)
+- [x] Update README with instructions to copy .env.example to .env
+- [x] Test: docker-compose up with .env file → services connect successfully
 
 **Files**:
 - NEW: .env (gitignored)
@@ -129,15 +129,15 @@
 ---
 
 ### Task 2.2: Remove Hardcoded Kafka CLUSTER_ID
-**Status**: pending
+**Status**: completed
 **Priority**: high
 **Estimated Effort**: 15 minutes
 
 **Subtasks**:
-- [ ] Replace hardcoded CLUSTER_ID with ${KAFKA_CLUSTER_ID} in docker-compose.yml
-- [ ] Add KAFKA_CLUSTER_ID to .env.example
-- [ ] Document in README that each environment should use unique cluster ID
-- [ ] Test: Each environment uses different CLUSTER_ID
+- [x] Replace hardcoded CLUSTER_ID with ${KAFKA_CLUSTER_ID} in docker-compose.yml
+- [x] Add KAFKA_CLUSTER_ID to .env.example
+- [x] Document in README that each environment should use unique cluster ID
+- [x] Test: Each environment uses different CLUSTER_ID
 
 **Files**:
 - MODIFY: docker-compose.yml
@@ -147,35 +147,37 @@
 ---
 
 ### Task 2.3: Implement Profile-Based CORS Configuration
-**Status**: pending
+**Status**: completed
 **Priority**: high
 **Estimated Effort**: 1 hour
 
 **Subtasks**:
-- [ ] Modify CorsConfig.java to load origins from @Value("${cors.allowed-origins}")
-- [ ] Add cors.allowed-origins property to application.yml with default localhost + production
-- [ ] Support comma-separated list of origins
-- [ ] Allow override via CORS_ALLOWED_ORIGINS environment variable
-- [ ] Test: Localhost requests allowed in development
-- [ ] Test: Production origin still allowed
+- [x] Modify CorsConfig.java to load origins from @Value("${cors.allowed-origins}")
+- [x] Add cors.allowed-origins property to application.yml with default localhost + production
+- [x] Support comma-separated list of origins
+- [x] Allow override via CORS_ALLOWED_ORIGINS environment variable
+- [x] Test: Localhost requests allowed in development
+- [x] Test: Production origin still allowed
 
 **Files**:
-- MODIFY: api-gateway/src/main/java/com/vivek/gateway/config/CorsConfig.java
+- MODIFY: api-gateway/src/main/java/com/vivek/api_gateway/config/CorsConfig.java
 - MODIFY: api-gateway/src/main/resources/application.yml
+- MODIFY: tracking-service/src/main/java/com/vivek/tracking/config/CorsConfig.java
+- MODIFY: tracking-service/src/main/resources/application.yml
 
 ---
 
 ### Task 2.4: Restrict Actuator Endpoint Exposure
-**Status**: pending
+**Status**: completed
 **Priority**: high
 **Estimated Effort**: 30 minutes
 
 **Subtasks**:
-- [ ] Modify application.yml in all services to set exposure.include: "health,info,prometheus,metrics"
-- [ ] Set health.show-details: when-authorized
-- [ ] Test: /actuator/health accessible without auth
-- [ ] Test: /actuator/shutdown returns 404
-- [ ] Test: /actuator/env returns 404
+- [x] Modify application.yml in all services to set exposure.include: "health,info,prometheus,metrics"
+- [x] Set health.show-details: when-authorized
+- [x] Test: /actuator/health accessible without auth
+- [x] Test: /actuator/shutdown returns 404
+- [x] Test: /actuator/env returns 404
 
 **Files**:
 - MODIFY: api-gateway/src/main/resources/application.yml
@@ -188,17 +190,17 @@
 ---
 
 ### Task 2.5: Consolidate Hardcoded Fleet Configuration
-**Status**: pending
+**Status**: completed
 **Priority**: medium
 **Estimated Effort**: 1 hour
 
 **Subtasks**:
-- [ ] Add ambulance.fleet.ids property to application.yml: AMB-101,AMB-102,AMB-103
-- [ ] Inject fleet IDs via @Value in AmbulanceStateTracker
-- [ ] Inject fleet IDs via @Value in AmbulanceMovementSimulator
-- [ ] Remove hardcoded String[] AMBULANCES arrays
-- [ ] Test: All ambulances initialized from config
-- [ ] Test: Auto-heal covers all configured ambulances
+- [x] Add ambulance.fleet.ids property to application.yml: AMB-101,AMB-102,AMB-103
+- [x] Inject fleet IDs via @Value in AmbulanceStateTracker
+- [x] Inject fleet IDs via @Value in AmbulanceMovementSimulator
+- [x] Remove hardcoded String[] AMBULANCES arrays
+- [x] Test: All ambulances initialized from config
+- [x] Test: Auto-heal covers all configured ambulances
 
 **Files**:
 - MODIFY: ambulance-service/src/main/resources/application.yml
@@ -208,15 +210,15 @@
 ---
 
 ### Task 2.6: Fix COMPLETED Status Availability Race
-**Status**: pending
+**Status**: completed (already fixed in Phase 1)
 **Priority**: medium
 **Estimated Effort**: 30 minutes
 
 **Subtasks**:
-- [ ] Modify completeTrip() to immediately transition COMPLETED → AVAILABLE atomically
-- [ ] Modify isAvailableInRedis() to only check "AVAILABLE" status (remove "COMPLETED")
-- [ ] Test: Ambulance completes trip → immediately AVAILABLE
-- [ ] Test: No assignment rejections due to COMPLETED status
+- [x] Modify completeTrip() to immediately transition COMPLETED → AVAILABLE atomically
+- [x] Modify isAvailableInRedis() to only check "AVAILABLE" status (remove "COMPLETED")
+- [x] Test: Ambulance completes trip → immediately AVAILABLE
+- [x] Test: No assignment rejections due to COMPLETED status
 
 **Files**:
 - MODIFY: ambulance-service/src/main/java/com/vivek/ambulance/listener/AmbulanceAssignmentListener.java
