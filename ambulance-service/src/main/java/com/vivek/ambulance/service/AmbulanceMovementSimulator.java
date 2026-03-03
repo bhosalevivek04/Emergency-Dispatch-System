@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import jakarta.annotation.PostConstruct;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +21,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public class AmbulanceMovementSimulator {
+
+	@Value("${ambulance.fleet.ids:AMB-101,AMB-102,AMB-103}")
+	private String fleetIdsConfig;
+	
+	private String[] ambulanceIds;
 
 	private final AmbulanceProducer producer;
 	private final AmbulanceStateTracker stateTracker;
@@ -47,16 +55,33 @@ public class AmbulanceMovementSimulator {
 	// Broadcast interval for stationary ambulances (10 seconds)
 	private static final long STATIONARY_BROADCAST_INTERVAL = 10000;
 
-	// Initial ambulance positions (Pune area)
-	static {
+	// Initial ambulance positions (Pune area) - will be initialized from config
+	private static final double[][] INITIAL_POSITIONS = {
+		{18.5204, 73.8567},  // Position for first ambulance
+		{18.5300, 73.8600},  // Position for second ambulance
+		{18.5100, 73.8500}   // Position for third ambulance
+	};
+	
+	@PostConstruct
+	public void initializeFleet() {
+		// Parse fleet IDs from configuration
+		ambulanceIds = fleetIdsConfig.split(",");
+		for (int i = 0; i < ambulanceIds.length; i++) {
+			ambulanceIds[i] = ambulanceIds[i].trim();
+		}
+		
+		log.info("Initializing movement simulator for fleet: {}", String.join(", ", ambulanceIds));
 	}
 
 	@Scheduled(fixedRate = 1000) // Update every 1 second for smooth animation
 	public void updateAmbulanceLocations() {
-		// Initialize ambulances if not present
-		initializeAmbulance("AMB-101", 18.5204, 73.8567);
-		initializeAmbulance("AMB-102", 18.5300, 73.8600);
-		initializeAmbulance("AMB-103", 18.5100, 73.8500);
+		// Initialize ambulances if not present (using configured fleet)
+		for (int i = 0; i < ambulanceIds.length; i++) {
+			String ambulanceId = ambulanceIds[i];
+			// Use initial position if available, otherwise use default
+			double[] position = i < INITIAL_POSITIONS.length ? INITIAL_POSITIONS[i] : INITIAL_POSITIONS[0];
+			initializeAmbulance(ambulanceId, position[0], position[1]);
+		}
 
 		// Update each ambulance
 		for (String ambulanceId : currentLocations.keySet()) {

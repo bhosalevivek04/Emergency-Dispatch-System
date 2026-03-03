@@ -47,10 +47,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
   metrics:
     tags:
       application: ${spring.application.name}
@@ -58,4 +58,9 @@ management:
 # OSRM configuration for route following
 osrm:
   url: ${OSRM_URL:http://localhost:5000}
+
+# Ambulance Fleet Configuration
+ambulance:
+  fleet:
+    ids: ${AMBULANCE_FLEET_IDS:AMB-101,AMB-102,AMB-103}
   enabled: ${OSRM_ENABLED:true}

@@ -51,8 +51,16 @@ spring:
           predicates:
             - Path=/api/dispatch,/api/dispatch/**
 
+# CORS Configuration
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001,http://localhost:3002}
+
+# Actuator Configuration - Restrict endpoint exposure for security
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized

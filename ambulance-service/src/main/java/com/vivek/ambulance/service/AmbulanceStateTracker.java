@@ -6,6 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -21,7 +22,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public class AmbulanceStateTracker {
-	private static final String[] AMBULANCES = { "AMB-101", "AMB-102", "AMB-103" };
+	@Value("${ambulance.fleet.ids:AMB-101,AMB-102,AMB-103}")
+	private String fleetIdsConfig;
+	
+	private String[] ambulanceIds;
+	
 	private static final long STALE_ASSIGNMENT_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(15);
 	private static final long STALE_IN_FLIGHT_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(30);
 	private final StringRedisTemplate redisTemplate;
@@ -29,7 +34,15 @@ public class AmbulanceStateTracker {
 
 	@PostConstruct
 	public void initializeAmbulances() {
-		for (String ambulanceId : AMBULANCES) {
+		// Parse fleet IDs from configuration
+		ambulanceIds = fleetIdsConfig.split(",");
+		for (int i = 0; i < ambulanceIds.length; i++) {
+			ambulanceIds[i] = ambulanceIds[i].trim();
+		}
+		
+		log.info("Initializing ambulance fleet: {}", String.join(", ", ambulanceIds));
+		
+		for (String ambulanceId : ambulanceIds) {
 			redisTemplate.opsForValue().setIfAbsent(statusKey(ambulanceId), AmbulanceStatus.AVAILABLE.name());
 			redisTemplate.opsForValue().setIfAbsent(versionKey(ambulanceId), "0");
 			redisTemplate.opsForValue().setIfAbsent(lastUpdatedKey(ambulanceId), String.valueOf(System.currentTimeMillis()));
@@ -156,7 +169,7 @@ public class AmbulanceStateTracker {
 
 	@Scheduled(fixedRate = 60000)
 	public void recoverStaleAssignments() {
-		for (String ambulanceId : AMBULANCES) {
+		for (String ambulanceId : ambulanceIds) {
 			healIfStuck(ambulanceId);
 		}
 	}
