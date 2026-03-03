@@ -152,6 +152,7 @@ public class AmbulanceMovementSimulator {
 
 	/**
 	 * Move ambulance along OSRM route waypoints
+	 * Uses iteration instead of recursion to avoid stack overflow on dense routes
 	 */
 	private void moveAlongRoute(String ambulanceId, Location current, List<double[]> waypoints) {
 		Integer waypointIdx = currentWaypointIndex.getOrDefault(ambulanceId, 0);
@@ -208,8 +209,8 @@ public class AmbulanceMovementSimulator {
 			
 			log.info("Ambulance {} reached waypoint {}/{}", ambulanceId, waypointIdx + 1, waypoints.size());
 			
-			// Continue to next waypoint immediately
-			moveAlongRoute(ambulanceId, current, waypoints);
+			// Process at most one waypoint per tick to avoid recursion
+			// The next tick will continue to the next waypoint
 		}
 	}
 

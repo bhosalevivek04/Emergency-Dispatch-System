@@ -1,8 +1,8 @@
 {
-  "emergencyId": "EMG-PHASE2-TEST",
-  "lat": 18.5204,
-  "lon": 73.8567,
+  "emergencyId": "EMG-FINAL-TEST-001",
+  "lat": 18.5250,
+  "lon": 73.8580,
   "priority": "HIGH",
   "callerPhone": "+91-9876543210",
-  "description": "Phase 2 configuration test"
+  "description": "Final movement test - watch on map!"
 }

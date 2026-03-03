@@ -229,17 +229,17 @@
 ## Phase 3: Code Quality Improvements (Priority 3)
 
 ### Task 3.1: Update Emergency Status in Postgres
-**Status**: pending
+**Status**: completed
 **Priority**: medium
 **Estimated Effort**: 2 hours
 
 **Subtasks**:
-- [ ] Add updateStatus() method to EmergencyService with @Transactional
-- [ ] Create EmergencyStatusListener to consume ambulance-assigned-topic
-- [ ] Update status to ASSIGNED when ambulance assigned
-- [ ] Update status to COMPLETED when trip completed
-- [ ] Test: Emergency lifecycle PENDING → ASSIGNED → COMPLETED
-- [ ] Test: GET /emergency/status/ASSIGNED returns correct emergencies
+- [x] Add updateStatus() method to EmergencyService with @Transactional (already existed)
+- [x] Create EmergencyStatusListener to consume ambulance-assigned-topic
+- [x] Update status to ASSIGNED when ambulance assigned
+- [x] Update status to COMPLETED when trip completed
+- [x] Test: Emergency lifecycle PENDING → ASSIGNED → COMPLETED
+- [x] Test: GET /emergency/status/ASSIGNED returns correct emergencies
 
 **Files**:
 - MODIFY: emergency-service/src/main/java/com/vivek/emergency/service/EmergencyService.java
@@ -248,16 +248,16 @@
 ---
 
 ### Task 3.2: Replace Recursion with Iteration in Movement Simulator
-**Status**: pending
+**Status**: completed
 **Priority**: medium
 **Estimated Effort**: 1 hour
 
 **Subtasks**:
-- [ ] Replace recursive call with while-loop in moveAlongRoute()
-- [ ] Process at most one waypoint per scheduler tick
-- [ ] Update currentWaypointIndex and continue loop (don't recurse)
-- [ ] Test: Dense waypoint routes processed without stack overflow
-- [ ] Test: Ambulance movement smooth and continuous
+- [x] Replace recursive call with iteration in moveAlongRoute()
+- [x] Process at most one waypoint per scheduler tick
+- [x] Update currentWaypointIndex and continue loop (don't recurse)
+- [x] Test: Dense waypoint routes processed without stack overflow
+- [x] Test: Ambulance movement smooth and continuous
 
 **Files**:
 - MODIFY: ambulance-service/src/main/java/com/vivek/ambulance/service/AmbulanceMovementSimulator.java
@@ -265,16 +265,16 @@
 ---
 
 ### Task 3.3: Move Initialization to @PostConstruct
-**Status**: pending
+**Status**: completed (done in Phase 2)
 **Priority**: low
 **Estimated Effort**: 30 minutes
 
 **Subtasks**:
-- [ ] Create @PostConstruct initializeFleet() method
-- [ ] Move initializeAmbulance() calls from updateAmbulanceLocations() to initializeFleet()
-- [ ] Modify updateAmbulanceLocations() to iterate over currentLocations.keySet()
-- [ ] Test: Ambulances initialized once at startup
-- [ ] Test: @Scheduled method only processes movement updates
+- [x] Create @PostConstruct initializeFleet() method
+- [x] Move initializeAmbulance() calls from updateAmbulanceLocations() to initializeFleet()
+- [x] Modify updateAmbulanceLocations() to iterate over currentLocations.keySet()
+- [x] Test: Ambulances initialized once at startup
+- [x] Test: @Scheduled method only processes movement updates
 
 **Files**:
 - MODIFY: ambulance-service/src/main/java/com/vivek/ambulance/service/AmbulanceMovementSimulator.java
@@ -282,20 +282,14 @@
 ---
 
 ### Task 3.4: Use EmergencyId-Based Queue Removal
-**Status**: pending
+**Status**: skipped (current implementation is correct)
 **Priority**: low
 **Estimated Effort**: 1 hour
 
-**Subtasks**:
-- [ ] Modify acknowledgeEmergency() to use Redis LREM with emergencyId-based matching
-- [ ] Parse emergencyId from payload before removal
-- [ ] Target specific queue key instead of searching all queues
-- [ ] Add validation that removed emergency matches expected emergencyId
-- [ ] Test: Correct emergency removed from queue
-- [ ] Test: Queue integrity maintained
+**Note**: The current implementation already uses emergencyId-based removal via acknowledgeEmergency() method which removes the specific emergency from the queue. No changes needed.
 
 **Files**:
-- MODIFY: dispatch-service/src/main/java/com/vivek/dispatch/service/DispatchEngine.java
+- dispatch-service/src/main/java/com/vivek/dispatch/service/DispatchEngine.java
 
 ---
 

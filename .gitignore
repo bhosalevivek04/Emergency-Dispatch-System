@@ -118,3 +118,7 @@ test-websocket.html
 watch-ambulance.ps1
 test-emergency.json
 reference/
+
+# Error logs
+error.txt
+**/error.txt
