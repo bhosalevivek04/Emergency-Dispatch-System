@@ -125,3 +125,8 @@ reference/
 # Error logs
 error.txt
 **/error.txt
+
+# RSA Private Keys (SECURITY: Never commit private keys!)
+**/keys/private_key.pem
+**/keys/private_key_pkcs8.pem
+# Public keys are safe to commit
