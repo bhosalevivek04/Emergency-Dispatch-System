@@ -35,7 +35,8 @@ public class OSRMService {
 			log.warn("OSRM returned no route from=({},{}) to=({},{})", fromLat, fromLon, toLat, toLon);
 			return null;
 		} catch (Exception e) {
-			log.error("OSRM request failed from=({},{}) to=({},{})", fromLat, fromLon, toLat, toLon, e);
+			log.debug("OSRM unavailable, using fallback distance calculation from=({},{}) to=({},{})", 
+				fromLat, fromLon, toLat, toLon);
 			return null;
 		}
 	}

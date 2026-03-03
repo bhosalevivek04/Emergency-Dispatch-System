@@ -27,4 +27,12 @@ public class AmbulanceProducer {
 		kafkaTemplate.send(COMPLETION_TOPIC, event.getAmbulanceId(), event);
 		meterRegistry.counter("ambulance.completions.kafka_published.total").increment();
 	}
+	
+	public void sendAcknowledgment(String topic, String emergencyId, String ambulanceId, String status, long version) {
+		com.vivek.ambulance.dto.AssignmentAckEvent ack = new com.vivek.ambulance.dto.AssignmentAckEvent(
+			emergencyId, ambulanceId, status, version, System.currentTimeMillis()
+		);
+		kafkaTemplate.send(topic, emergencyId, ack);
+		meterRegistry.counter("ambulance.acks.published.total").increment();
+	}
 }

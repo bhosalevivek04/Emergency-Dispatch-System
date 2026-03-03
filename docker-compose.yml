@@ -24,53 +24,104 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+    networks:
+      - dispatch-network
 
   redis:
     image: redis:7
     container_name: redis
     ports:
       - "6379:6379"
+    networks:
+      - dispatch-network
+
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: postgres
+    environment:
+      POSTGRES_DB: emergency_dispatch
+      POSTGRES_USER: dispatch_user
+      POSTGRES_PASSWORD: dispatch_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    networks:
+      - dispatch-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatch_user -d emergency_dispatch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   emergency-service:
     build: ./emergency-service
     container_name: emergency-service
     depends_on:
-      - kafka
-      - redis
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
     ports:
       - "8081:8081"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/emergency_dispatch
+      SPRING_DATASOURCE_USERNAME: dispatch_user
+      SPRING_DATASOURCE_PASSWORD: dispatch_password
+    networks:
+      - dispatch-network
     restart: always
 
   dispatch-service:
     build: ./dispatch-service
     container_name: dispatch-service
     depends_on:
-      - kafka
-      - redis
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
     ports:
       - "8083:8083"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/emergency_dispatch
+      SPRING_DATASOURCE_USERNAME: dispatch_user
+      SPRING_DATASOURCE_PASSWORD: dispatch_password
+    networks:
+      - dispatch-network
     restart: always
 
   ambulance-service:
     build: ./ambulance-service
     container_name: ambulance-service
     depends_on:
-      - kafka
-      - redis
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
     ports:
       - "8082:8082"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/emergency_dispatch
+      SPRING_DATASOURCE_USERNAME: dispatch_user
+      SPRING_DATASOURCE_PASSWORD: dispatch_password
+    networks:
+      - dispatch-network
     restart: always
 
   notification-service:
@@ -148,3 +199,8 @@ services:
 
 volumes:
   kafka_data:
+  postgres_data:
+
+networks:
+  dispatch-network:
+    driver: bridge

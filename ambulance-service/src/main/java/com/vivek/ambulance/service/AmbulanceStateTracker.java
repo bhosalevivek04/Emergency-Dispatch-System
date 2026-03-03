@@ -21,7 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public class AmbulanceStateTracker {
-	private static final String[] AMBULANCES = { "A1", "A2", "A3" };
+	private static final String[] AMBULANCES = { "AMB-101", "AMB-102", "AMB-103" };
 	private static final long STALE_ASSIGNMENT_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(15);
 	private static final long STALE_IN_FLIGHT_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(30);
 	private final StringRedisTemplate redisTemplate;

@@ -41,6 +41,7 @@ public class DispatchEngine {
 	private final ObjectMapper objectMapper;
 	private final MeterRegistry meterRegistry;
 	private final OSRMService osrmService;
+	private final AssignmentHistoryService assignmentHistoryService;
 
 	private final Map<String, AmbulanceLocationEvent> ambulanceState = new ConcurrentHashMap<>();
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
@@ -68,6 +69,16 @@ public class DispatchEngine {
 	}
 
 	public void handleEmergency(EmergencyEvent emergency) {
+		// Idempotency check - prevent duplicate processing on Kafka replay
+		String idempotencyKey = "idempotency:emergency:" + emergency.getEmergencyId();
+		Boolean isNew = redisTemplate.opsForValue().setIfAbsent(idempotencyKey, "1", Duration.ofMinutes(30));
+		
+		if (!Boolean.TRUE.equals(isNew)) {
+			log.info("Duplicate emergency ignored (idempotency) emergencyId={}", emergency.getEmergencyId());
+			meterRegistry.counter("dispatch.emergencies.duplicate.total").increment();
+			return;
+		}
+		
 		log.info("Emergency queued emergencyId={} priority={} lat={} lon={}", emergency.getEmergencyId(),
 				emergency.getPriority(), emergency.getLat(), emergency.getLon());
 		emergencyQueuedCounter.increment();
@@ -120,9 +131,26 @@ public class DispatchEngine {
 				AssignmentEvent assignment = new AssignmentEvent(emergency.getEmergencyId(), ambulanceId, 
 					distanceKm, assignmentVersion, emergency.getLat(), emergency.getLon());
 				kafkaTemplate.send(ASSIGNMENT_TOPIC, emergency.getEmergencyId(), assignment).get(5, TimeUnit.SECONDS);
+				
+				// Immediately mark ambulance as ASSIGNED in Redis to prevent double-assignment
+				redisTemplate.opsForValue().set(statusKey(ambulanceId), "ASSIGNED");
+				
 				acknowledgeEmergency(emergency);
 				assignmentPublishedCounter.increment();
 				publishTimer.stop(assignmentPublishTimer);
+
+				// Record assignment to PostgreSQL
+				try {
+					assignmentHistoryService.recordAssignment(
+						emergency.getEmergencyId(),
+						ambulanceId,
+						distanceKm,
+						(int) assignmentVersion
+					);
+				} catch (Exception e) {
+					log.error("Failed to record assignment history emergencyId={} ambulanceId={}", 
+						emergency.getEmergencyId(), ambulanceId, e);
+				}
 
 				log.info(
 						"Assignment published emergencyId={} ambulanceId={} priority={} distanceKm={} etaMin={} version={}",
@@ -351,4 +379,15 @@ public class DispatchEngine {
 		Long size = redisTemplate.opsForList().size(key);
 		return size == null ? 0L : size;
 	}
+
+
+	public void requeueEmergency(String emergencyId) {
+		// Remove idempotency key to allow re-processing
+		String idempotencyKey = "idempotency:emergency:" + emergencyId;
+		redisTemplate.delete(idempotencyKey);
+
+		log.info("Emergency re-queued for dispatch after rejection emergencyId={}", emergencyId);
+		meterRegistry.counter("dispatch.emergencies.requeued.total").increment();
+	}
+
 }

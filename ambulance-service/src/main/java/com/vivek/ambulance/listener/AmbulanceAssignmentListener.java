@@ -69,8 +69,14 @@ public class AmbulanceAssignmentListener {
 			log.warn(
 					"Assignment rejected by FSM assignmentKey={} ambulanceId={} emergencyId={} currentStatus={} currentVersion={} incomingVersion={}",
 					assignmentKey, ambulanceId, emergencyId, currentStatus, currentVersion, assignedExpectedVersion);
+			
+			// Send REJECTED ACK to dispatch service
+			sendAssignmentAck(emergencyId, ambulanceId, "REJECTED", assignedExpectedVersion);
 			return;
 		}
+		
+		// Send ACCEPTED ACK to dispatch service
+		sendAssignmentAck(emergencyId, ambulanceId, "ACCEPTED", assignedExpectedVersion + 1);
 
 		// Set destination for movement simulator from assignment event
 		double estimatedDurationSeconds = 0;
@@ -97,11 +103,32 @@ public class AmbulanceAssignmentListener {
 			log.info("Dynamic state transitions for {}: ON_ROUTE in {}s, ARRIVED in {}s, COMPLETED in {}s",
 				ambulanceId, onRouteDelay, arrivedDelay, completedDelay);
 		} else {
-			// Fallback to default timings
-			onRouteDelay = 3;
-			arrivedDelay = 5;
-			completedDelay = 8;
-			log.info("Using default state transitions for {} (no route duration available)", ambulanceId);
+			// Fallback to default timings - use longer delays for demo visibility
+			// Get ambulance current location from movement simulator
+			var currentLocation = movementSimulator.getCurrentLocation(ambulanceId);
+			if (currentLocation != null && assignment.getEmergencyLat() != 0 && assignment.getEmergencyLon() != 0) {
+				double straightLineDistance = calculateStraightLineDistance(
+					currentLocation.lat, currentLocation.lon,
+					assignment.getEmergencyLat(), assignment.getEmergencyLon()
+				);
+				
+				// Assume 30 km/h average speed for estimation
+				double estimatedMinutes = (straightLineDistance / 30.0) * 60.0;
+				long estimatedSeconds = Math.max(60, (long)(estimatedMinutes * 60));
+				
+				onRouteDelay = Math.max(5, (long)(estimatedSeconds * 0.1));
+				arrivedDelay = Math.max(30, (long)(estimatedSeconds * 0.9));
+				completedDelay = estimatedSeconds + 30;
+				
+				log.info("Using fallback state transitions for {} (no OSRM route): distance={}km, ON_ROUTE in {}s, ARRIVED in {}s, COMPLETED in {}s",
+					ambulanceId, String.format("%.2f", straightLineDistance), onRouteDelay, arrivedDelay, completedDelay);
+			} else {
+				// Ultimate fallback - use minimum delays
+				onRouteDelay = 5;
+				arrivedDelay = 60;
+				completedDelay = 120;
+				log.info("Using minimum fallback state transitions for {} (no location data)", ambulanceId);
+			}
 		}
 
 		scheduler.schedule(() -> transitionToOnRoute(ambulanceId, assignedExpectedVersion + 1), onRouteDelay, TimeUnit.SECONDS);
@@ -152,5 +179,25 @@ public class AmbulanceAssignmentListener {
 
 	private String activeEmergencyKey(String ambulanceId) {
 		return "ambulance:" + ambulanceId + ":activeEmergencyId";
+	}
+	
+	private double calculateStraightLineDistance(double lat1, double lon1, double lat2, double lon2) {
+		final int R = 6371; // Earth radius in km
+		double latDistance = Math.toRadians(lat2 - lat1);
+		double lonDistance = Math.toRadians(lon2 - lon1);
+		double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+				+ Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+				* Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+		double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+		return R * c;
+	}
+	
+	private void sendAssignmentAck(String emergencyId, String ambulanceId, String status, long version) {
+		try {
+			ambulanceProducer.sendAcknowledgment("ambulance-assignment-ack-topic", emergencyId, ambulanceId, status, version);
+			log.info("Assignment ACK sent emergencyId={} ambulanceId={} status={}", emergencyId, ambulanceId, status);
+		} catch (Exception e) {
+			log.error("Failed to send assignment ACK emergencyId={} ambulanceId={}", emergencyId, ambulanceId, e);
+		}
 	}
 }

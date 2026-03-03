@@ -36,7 +36,7 @@ public class TrackingLocationListener {
 		meterRegistry.counter("tracking.location.consumed.total").increment();
 		meterRegistry.counter("tracking.websocket.broadcast.total").increment();
 		if (logEnabled) {
-			log.info("Broadcast location ambulanceId={} latitude={} longitude={}", event.getAmbulanceId(),
+			log.debug("Broadcast location ambulanceId={} latitude={} longitude={}", event.getAmbulanceId(),
 					event.getLatitude(), event.getLongitude());
 		}
 	}

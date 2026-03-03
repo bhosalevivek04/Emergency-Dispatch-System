@@ -37,8 +37,12 @@ public class AmbulanceMovementSimulator {
 	// Track last broadcast time for each ambulance
 	private final Map<String, Long> lastBroadcastTime = new ConcurrentHashMap<>();
 
-	// Movement speed: ~0.00025 degrees per update (~25 meters per second for smooth visualization)
-	private static final double MOVEMENT_SPEED = 0.00025;
+	// Movement speed: ~0.00002 degrees per update (~2 meters per second for realistic visualization)
+	// At 1 second update rate, this gives ~7.2 km/h walking speed for demo purposes
+	private static final double MOVEMENT_SPEED = 0.00002;
+	
+	// Broadcast interval for moving ambulances (3 seconds)
+	private static final long MOVING_BROADCAST_INTERVAL = 3000;
 	
 	// Broadcast interval for stationary ambulances (10 seconds)
 	private static final long STATIONARY_BROADCAST_INTERVAL = 10000;
@@ -151,11 +155,16 @@ public class AmbulanceMovementSimulator {
 			// Calculate speed
 			double speed = 40.0 + (Math.random() * 20); // 40-60 km/h
 			
-			publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
-			lastBroadcastTime.put(ambulanceId, System.currentTimeMillis());
-			
-			log.info("Moving {} along route: waypoint {}/{}, distance to waypoint: {}",
-					ambulanceId, waypointIdx + 1, waypoints.size(), String.format("%.4f", distance));
+			// Only broadcast if enough time has passed (throttle to every 3 seconds)
+			long currentTime = System.currentTimeMillis();
+			Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
+			if (lastBroadcast == null || (currentTime - lastBroadcast) >= MOVING_BROADCAST_INTERVAL) {
+				publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
+				lastBroadcastTime.put(ambulanceId, currentTime);
+				
+				log.info("Moving {} along route: waypoint {}/{}, distance to waypoint: {}",
+						ambulanceId, waypointIdx + 1, waypoints.size(), String.format("%.4f", distance));
+			}
 		} else {
 			// Reached current waypoint, move to next
 			current.lat = targetLat;
@@ -190,22 +199,34 @@ public class AmbulanceMovementSimulator {
 			// Calculate speed (km/h) - simulated
 			double speed = 40.0 + (Math.random() * 20); // 40-60 km/h
 
-			publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
-			lastBroadcastTime.put(ambulanceId, System.currentTimeMillis());
-			
-			log.info("Moving {} towards emergency (straight line): ({}, {}) -> ({}, {}) distance: {}",
-					ambulanceId, 
-					String.format("%.6f", current.lat), 
-					String.format("%.6f", current.lon), 
-					String.format("%.6f", destination.lat), 
-					String.format("%.6f", destination.lon), 
-					String.format("%.4f", distance));
+			// Only broadcast if enough time has passed (throttle to every 3 seconds)
+			long currentTime = System.currentTimeMillis();
+			Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
+			if (lastBroadcast == null || (currentTime - lastBroadcast) >= MOVING_BROADCAST_INTERVAL) {
+				publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
+				lastBroadcastTime.put(ambulanceId, currentTime);
+				
+				log.info("Moving {} towards emergency (straight line): ({}, {}) -> ({}, {}) distance: {}",
+						ambulanceId, 
+						String.format("%.6f", current.lat), 
+						String.format("%.6f", current.lon), 
+						String.format("%.6f", destination.lat), 
+						String.format("%.6f", destination.lon), 
+						String.format("%.4f", distance));
+			}
 		} else {
 			// Reached destination
 			current.lat = destination.lat;
 			current.lon = destination.lon;
-			publishLocation(ambulanceId, current.lat, current.lon, 0.0, 0.0);
-			lastBroadcastTime.put(ambulanceId, System.currentTimeMillis());
+			
+			// Broadcast if enough time has passed
+			long currentTime = System.currentTimeMillis();
+			Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
+			if (lastBroadcast == null || (currentTime - lastBroadcast) >= MOVING_BROADCAST_INTERVAL) {
+				publishLocation(ambulanceId, current.lat, current.lon, 0.0, 0.0);
+				lastBroadcastTime.put(ambulanceId, currentTime);
+			}
+			
 			log.info("Ambulance {} reached destination ({}, {})", ambulanceId, current.lat, current.lon);
 		}
 	}

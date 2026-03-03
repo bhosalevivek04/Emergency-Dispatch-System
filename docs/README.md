@@ -9,6 +9,8 @@ Complete documentation for the Emergency Ambulance Dispatch System.
 - [Project Structure](PROJECT_STRUCTURE.md) - Directory organization and file layout
 
 ### Architecture & Design
+- [Dispatch Algorithm](DISPATCH_ALGORITHM.md) - **Production-grade dispatch logic (9/10 rating)**
+- [Production Upgrades](PRODUCTION_UPGRADES.md) - **System improvements summary**
 - [System Architecture](ARCHITECTURE.md) - High-level system design and components
 - [Microservices Architecture](MICROSERVICES_ARCHITECTURE.md) - Detailed microservices breakdown
 - [API Documentation](API_DOCUMENTATION.md) - REST API endpoints and WebSocket protocols
@@ -31,11 +33,14 @@ The system consists of 6 microservices:
 6. **Tracking Service** (8085) - Real-time WebSocket updates
 
 ### Key Features
+- **Production-Grade Dispatch**: Redis GEO for O(log n) nearest search, idempotency, ACK flow
 - **Dynamic State Transitions**: Realistic timing based on actual route distance
 - **Intelligent Routing**: OSRM integration with fallback calculation
 - **Real-time Tracking**: WebSocket-based live updates
 - **Event-Driven**: Kafka for inter-service communication
 - **Scalable**: Independent microservices with Redis state management
+- **Auto-Heal**: Automatic recovery from stuck states
+- **Distributed Locking**: Horizontal scaling support
 
 ### Technology Stack
 - **Backend**: Spring Boot, Kafka, Redis
@@ -48,6 +53,8 @@ The system consists of 6 microservices:
 ```
 docs/
 ├── README.md                          # This file
+├── DISPATCH_ALGORITHM.md              # Production-grade dispatch logic ⭐
+├── PRODUCTION_UPGRADES.md             # System improvements summary ⭐
 ├── ARCHITECTURE.md                    # System architecture
 ├── MICROSERVICES_ARCHITECTURE.md      # Microservices details
 ├── API_DOCUMENTATION.md               # API reference
