@@ -112,3 +112,9 @@ logs/
 
 # Spring Boot
 spring-boot-devtools.properties
+
+# Test files
+test-websocket.html
+watch-ambulance.ps1
+test-emergency.json
+reference/
