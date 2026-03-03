@@ -34,19 +34,33 @@ public class AmbulanceStateTracker {
 
 	@PostConstruct
 	public void initializeAmbulances() {
-		// Parse fleet IDs from configuration
-		ambulanceIds = fleetIdsConfig.split(",");
-		for (int i = 0; i < ambulanceIds.length; i++) {
-			ambulanceIds[i] = ambulanceIds[i].trim();
-		}
-		
-		log.info("Initializing ambulance fleet: {}", String.join(", ", ambulanceIds));
-		
-		for (String ambulanceId : ambulanceIds) {
-			redisTemplate.opsForValue().setIfAbsent(statusKey(ambulanceId), AmbulanceStatus.AVAILABLE.name());
-			redisTemplate.opsForValue().setIfAbsent(versionKey(ambulanceId), "0");
-			redisTemplate.opsForValue().setIfAbsent(lastUpdatedKey(ambulanceId), String.valueOf(System.currentTimeMillis()));
-			healIfStuck(ambulanceId);
+		try {
+			// Parse fleet IDs from configuration
+			if (fleetIdsConfig == null || fleetIdsConfig.trim().isEmpty()) {
+				log.error("Fleet IDs configuration is null or empty! Using default.");
+				fleetIdsConfig = "AMB-101,AMB-102,AMB-103";
+			}
+			
+			ambulanceIds = fleetIdsConfig.split(",");
+			for (int i = 0; i < ambulanceIds.length; i++) {
+				ambulanceIds[i] = ambulanceIds[i].trim();
+			}
+			
+			log.info("Initializing ambulance fleet: {}", String.join(", ", ambulanceIds));
+			
+			for (String ambulanceId : ambulanceIds) {
+				log.debug("Initializing ambulance: {}", ambulanceId);
+				redisTemplate.opsForValue().setIfAbsent(statusKey(ambulanceId), AmbulanceStatus.AVAILABLE.name());
+				redisTemplate.opsForValue().setIfAbsent(versionKey(ambulanceId), "0");
+				redisTemplate.opsForValue().setIfAbsent(lastUpdatedKey(ambulanceId), String.valueOf(System.currentTimeMillis()));
+				healIfStuck(ambulanceId);
+				log.debug("Ambulance {} initialized successfully", ambulanceId);
+			}
+			
+			log.info("Ambulance fleet initialization complete. Total ambulances: {}", ambulanceIds.length);
+		} catch (Exception e) {
+			log.error("Failed to initialize ambulance fleet", e);
+			throw new RuntimeException("Ambulance fleet initialization failed", e);
 		}
 	}
 

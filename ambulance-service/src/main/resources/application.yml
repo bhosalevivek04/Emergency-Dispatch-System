@@ -62,5 +62,4 @@ osrm:
 # Ambulance Fleet Configuration
 ambulance:
   fleet:
-    ids: ${AMBULANCE_FLEET_IDS:AMB-101,AMB-102,AMB-103}
-  enabled: ${OSRM_ENABLED:true}
+    ids: AMB-101,AMB-102,AMB-103

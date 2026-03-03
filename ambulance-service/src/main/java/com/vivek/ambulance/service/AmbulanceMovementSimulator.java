@@ -64,13 +64,23 @@ public class AmbulanceMovementSimulator {
 	
 	@PostConstruct
 	public void initializeFleet() {
-		// Parse fleet IDs from configuration
-		ambulanceIds = fleetIdsConfig.split(",");
-		for (int i = 0; i < ambulanceIds.length; i++) {
-			ambulanceIds[i] = ambulanceIds[i].trim();
+		try {
+			// Parse fleet IDs from configuration
+			if (fleetIdsConfig == null || fleetIdsConfig.trim().isEmpty()) {
+				log.error("Fleet IDs configuration is null or empty! Using default.");
+				fleetIdsConfig = "AMB-101,AMB-102,AMB-103";
+			}
+			
+			ambulanceIds = fleetIdsConfig.split(",");
+			for (int i = 0; i < ambulanceIds.length; i++) {
+				ambulanceIds[i] = ambulanceIds[i].trim();
+			}
+			
+			log.info("Initializing movement simulator for fleet: {}", String.join(", ", ambulanceIds));
+		} catch (Exception e) {
+			log.error("Failed to initialize movement simulator fleet", e);
+			throw new RuntimeException("Movement simulator fleet initialization failed", e);
 		}
-		
-		log.info("Initializing movement simulator for fleet: {}", String.join(", ", ambulanceIds));
 	}
 
 	@Scheduled(fixedRate = 1000) // Update every 1 second for smooth animation
