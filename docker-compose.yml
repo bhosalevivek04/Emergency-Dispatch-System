@@ -14,7 +14,7 @@ services:
       CLUSTER_ID: ${KAFKA_CLUSTER_ID}
 
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
@@ -26,6 +26,11 @@ services:
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
 
   redis:
     image: redis:7
@@ -34,6 +39,11 @@ services:
       - "6379:6379"
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres:
     image: postgis/postgis:15-3.3
@@ -62,21 +72,22 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8081:8081"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
-      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     networks:
       - dispatch-network
-    restart: always
+    restart: on-failure
 
   dispatch-service:
     build: ./dispatch-service
@@ -85,21 +96,21 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8083:8083"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
-      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - dispatch-network
-    restart: always
+    restart: on-failure
 
   ambulance-service:
     build: ./ambulance-service
@@ -108,60 +119,77 @@ services:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8082:8082"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
-      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       AMBULANCE_FLEET_IDS: ${AMBULANCE_FLEET_IDS}
     networks:
       - dispatch-network
-    restart: always
+    restart: on-failure
 
   notification-service:
     build: ./notification-service
     container_name: notification-service
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
       - "8084:8084"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     networks:
       - dispatch-network
-    restart: always
+    restart: on-failure
 
   tracking-service:
     build: ./tracking-service
     container_name: tracking-service
     depends_on:
-      - kafka
-      - redis
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8085:8085"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
-      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     networks:
       - dispatch-network
-    restart: always
+    restart: on-failure
 
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
     depends_on:
       - emergency-service
+      - dispatch-service
+      - ambulance-service
+      - tracking-service
+      - notification-service
     ports:
       - "8080:8080"
-    restart: always
+    environment:
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      EMERGENCY_SERVICE_URL: http://emergency-service:8081
+      AMBULANCE_SERVICE_URL: http://ambulance-service:8082
+      DISPATCH_SERVICE_URL: http://dispatch-service:8083
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      TRACKING_SERVICE_URL: http://tracking-service:8085
+    networks:
+      - dispatch-network
+    restart: on-failure
 
   prometheus:
     image: prom/prometheus:latest
@@ -170,27 +198,32 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - dispatch-network
     restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_RENDERING_SERVER_URL=http://renderer:8081/render
       - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
       - GF_LOG_FILTERS=rendering:debug
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
     depends_on:
       - prometheus
       - renderer
+    networks:
+      - dispatch-network
     restart: unless-stopped
 
   renderer:
     image: grafana/grafana-image-renderer:latest
     container_name: grafana-renderer
+    networks:
+      - dispatch-network
     restart: unless-stopped
 
   tracking-client:
@@ -199,8 +232,10 @@ services:
     depends_on:
       - tracking-service
     ports:
-      - "3001:80"
-    restart: always
+      - "3000:80"
+    networks:
+      - dispatch-network
+    restart: on-failure
 
 volumes:
   kafka_data:
