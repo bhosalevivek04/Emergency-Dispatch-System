@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -49,7 +49,7 @@ class OutboxPatternTest {
     @Autowired private OutboxPublisher outboxPublisher;
 
     // Mock KafkaTemplate so tests control whether Kafka "succeeds" or "fails"
-    @MockBean private KafkaTemplate<String, Object> kafkaTemplate;
+    @MockitoBean private KafkaTemplate<String, Object> kafkaTemplate;
 
     @BeforeEach
     void setUp() {
@@ -109,6 +109,7 @@ class OutboxPatternTest {
 
     @Test
     @DisplayName("TEST 3: OutboxPublisher retries when Kafka is down, publishes when Kafka recovers")
+    @SuppressWarnings("unchecked")
     void shouldRetryWhenKafkaDownThenPublishOnRecovery() throws Exception {
         // Given — fail twice, succeed on third attempt
         when(kafkaTemplate.send(anyString(), anyString(), any()))
@@ -170,7 +171,7 @@ class OutboxPatternTest {
         return e;
     }
 
-    @SuppressWarnings({"unchecked","rawtypes"})
+    @SuppressWarnings("rawtypes")
     private CompletableFuture failFuture(String message) {
         CompletableFuture f = new CompletableFuture();
         f.completeExceptionally(new RuntimeException(message));
