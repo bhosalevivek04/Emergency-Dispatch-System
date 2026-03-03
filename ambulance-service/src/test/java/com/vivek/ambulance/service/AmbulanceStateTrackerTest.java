@@ -37,7 +37,7 @@ class AmbulanceStateTrackerTest {
     @BeforeEach
     void setUp() {
         redisTemplate = mock(StringRedisTemplate.class);
-        valueOps      = mock(ValueOperations.class);
+        valueOps      = mockValueOps();
         meterRegistry = new SimpleMeterRegistry();
 
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
@@ -46,10 +46,16 @@ class AmbulanceStateTrackerTest {
         ReflectionTestUtils.setField(tracker, "fleetIdsConfig", "AMB-101,AMB-102,AMB-103");
     }
 
+    @SuppressWarnings("unchecked")
+    private ValueOperations<String, String> mockValueOps() {
+        return (ValueOperations<String, String>) mock(ValueOperations.class);
+    }
+
     // ── TEST 7: Version mismatch → transition rejected ────────────────────
 
     @Test
     @DisplayName("TEST 7a: transition() returns false when expectedVersion does not match Redis version")
+    @SuppressWarnings("unchecked")
     void transition_versionMismatch_returnsFalse() {
         // Lua script returns -1 (version mismatch)
         when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), any(), any(), any()))
@@ -62,6 +68,7 @@ class AmbulanceStateTrackerTest {
 
     @Test
     @DisplayName("TEST 7b: transition() returns false when ambulance key does not exist in Redis")
+    @SuppressWarnings("unchecked")
     void transition_ambulanceKeyMissing_returnsFalse() {
         // Lua script returns -3 (key not found)
         when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), any(), any(), any()))
@@ -74,6 +81,7 @@ class AmbulanceStateTrackerTest {
 
     @Test
     @DisplayName("TEST 7c: transition() returns true and new version on correct expectedVersion")
+    @SuppressWarnings("unchecked")
     void transition_correctVersion_returnsTrue() {
         // Lua script returns new version (version + 1 = 3)
         when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), any(), any(), any()))
@@ -86,6 +94,7 @@ class AmbulanceStateTrackerTest {
 
     @Test
     @DisplayName("TEST 7d: version_mismatch metric is incremented on rejected transition")
+    @SuppressWarnings("unchecked")
     void transition_versionMismatch_incrementsFailureMetric() {
         when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), any(), any(), any()))
                 .thenReturn(-1L);
@@ -102,6 +111,7 @@ class AmbulanceStateTrackerTest {
 
     @Test
     @DisplayName("TEST 8a: Lua script ensures exactly one winner when two threads race to transition")
+    @SuppressWarnings("unchecked")
     void transition_concurrentRace_exactlyOneSucceeds() throws InterruptedException {
         // Simulate: first caller gets the lock (returns new version 1),
         // second caller has stale version (returns -1 version mismatch)
@@ -147,6 +157,7 @@ class AmbulanceStateTrackerTest {
 
     @Test
     @DisplayName("TEST 8b: assignEmergencyAtomically() rejects second assignment when first succeeds")
+    @SuppressWarnings("unchecked")
     void assignEmergencyAtomically_secondCallRejected() {
         // First assignment succeeds, second is rejected (ambulance now ASSIGNED, not AVAILABLE)
         when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), any(), any(), any()))
@@ -163,6 +174,7 @@ class AmbulanceStateTrackerTest {
     @Test
     @DisplayName("TEST 8c: safeTransition in AmbulanceAssignmentListener reads version fresh, " +
                  "so stale pre-computed version+N offsets never cause silent failures")
+    @SuppressWarnings("unchecked")
     void safeTransition_readsFreshVersionFromRedis() {
         // This test documents the expected behaviour of the safeTransition() pattern:
         // If a version was pre-computed as (assignedVersion + 2) but auto-heal ran

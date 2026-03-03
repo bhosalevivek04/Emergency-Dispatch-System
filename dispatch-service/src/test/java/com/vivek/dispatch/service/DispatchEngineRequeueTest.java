@@ -40,26 +40,53 @@ class DispatchEngineRequeueTest {
     @BeforeEach
     void setUp() {
         redisTemplate  = mock(StringRedisTemplate.class);
-        valueOps       = mock(ValueOperations.class);
-        listOps        = mock(ListOperations.class);
+        valueOps       = mockValueOps();
+        listOps        = mockListOps();
         meterRegistry  = new SimpleMeterRegistry();
 
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(redisTemplate.opsForList()).thenReturn(listOps);
 
+        // Mock dependencies - use proper generic types
         @SuppressWarnings("unchecked")
-        KafkaTemplate<String, Object> kafkaTemplate = mock(KafkaTemplate.class);
+        KafkaTemplate<String, com.vivek.dispatch.dto.AssignmentEvent> kafkaTemplate = 
+            (KafkaTemplate<String, com.vivek.dispatch.dto.AssignmentEvent>) mock(KafkaTemplate.class);
         OSRMService osrmService = mock(OSRMService.class);
         AssignmentHistoryService historyService = mock(AssignmentHistoryService.class);
 
-        dispatchEngine = new DispatchEngine(
-            kafkaTemplate,
-            redisTemplate,
-            objectMapper,
-            meterRegistry,
-            osrmService,
-            historyService
-        );
+        // Use reflection to create DispatchEngine since it uses @RequiredArgsConstructor
+        try {
+            java.lang.reflect.Constructor<DispatchEngine> constructor = 
+                DispatchEngine.class.getDeclaredConstructor(
+                    KafkaTemplate.class,
+                    StringRedisTemplate.class,
+                    ObjectMapper.class,
+                    MeterRegistry.class,
+                    OSRMService.class,
+                    AssignmentHistoryService.class
+                );
+            constructor.setAccessible(true);
+            dispatchEngine = constructor.newInstance(
+                kafkaTemplate,
+                redisTemplate,
+                objectMapper,
+                meterRegistry,
+                osrmService,
+                historyService
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create DispatchEngine for testing", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private ValueOperations<String, String> mockValueOps() {
+        return (ValueOperations<String, String>) mock(ValueOperations.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private ListOperations<String, String> mockListOps() {
+        return (ListOperations<String, String>) mock(ListOperations.class);
     }
 
     // ── Test 6a: Payload saved at enqueue time ────────────────────────────
@@ -78,7 +105,7 @@ class DispatchEngineRequeueTest {
         // Verify payload saved with the correct key and 2h TTL
         verify(valueOps).set(
                 eq("emergency:payload:EMG-REQ-001"),
-                argThat(payload -> payload.contains("EMG-REQ-001")),
+                argThat((String payload) -> payload.contains("EMG-REQ-001")),
                 eq(java.time.Duration.ofHours(2))
         );
 
