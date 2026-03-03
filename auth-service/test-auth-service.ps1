@@ -176,18 +176,20 @@ Write-Host ""
 
 # Test 9: Refresh Token
 Write-Host "Test 9: Refresh Token" -ForegroundColor Yellow
-if ($adminRefreshToken) {
+# Use the refresh token from login (Test 5), not from registration (Test 1)
+if ($loginRefreshToken) {
     # Wait a moment to ensure token is not immediately reused
     Start-Sleep -Milliseconds 500
     
     $refreshBody = @{
-        refreshToken = $adminRefreshToken
+        refreshToken = $loginRefreshToken
     } | ConvertTo-Json
     
     try {
         $refreshResponse = Invoke-RestMethod -Uri "$BaseUrl/auth/refresh" -Method Post -Body $refreshBody -ContentType "application/json"
         Write-Host "✓ Token refresh successful" -ForegroundColor Green
         Write-Host "New Access Token: $($refreshResponse.accessToken.Substring(0, 50))..."
+        $newRefreshToken = $refreshResponse.refreshToken
     } catch {
         Write-Host "✗ Token refresh failed" -ForegroundColor Red
         Write-Host "Status Code: $($_.Exception.Response.StatusCode)"
@@ -200,9 +202,12 @@ Write-Host ""
 
 # Test 10: Logout
 Write-Host "Test 10: Logout" -ForegroundColor Yellow
-if ($loginRefreshToken) {
+# Use the new refresh token from Test 9 if available, otherwise use login token
+$logoutToken = if ($newRefreshToken) { $newRefreshToken } else { $loginRefreshToken }
+
+if ($logoutToken) {
     $logoutBody = @{
-        refreshToken = $loginRefreshToken
+        refreshToken = $logoutToken
     } | ConvertTo-Json
     
     try {
@@ -219,9 +224,9 @@ Write-Host ""
 
 # Test 11: Use Revoked Token (Should Fail)
 Write-Host "Test 11: Use Revoked Token (Should Fail)" -ForegroundColor Yellow
-if ($loginRefreshToken) {
+if ($logoutToken) {
     $revokedBody = @{
-        refreshToken = $loginRefreshToken
+        refreshToken = $logoutToken
     } | ConvertTo-Json
     
     try {
