@@ -38,8 +38,17 @@ public class AmbulanceAssignmentListener {
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
 	@KafkaListener(topics = "ambulance-assigned-topic", groupId = "ambulance-driver-group")
-	public void consumeAssignment(String message) throws JsonProcessingException {
-		AssignmentEvent assignment = objectMapper.readValue(message, AssignmentEvent.class);
+	public void consumeAssignment(String message) {
+		// Never propagate JsonProcessingException — it causes infinite Kafka retry loops
+		AssignmentEvent assignment;
+		try {
+			assignment = objectMapper.readValue(message, AssignmentEvent.class);
+		} catch (JsonProcessingException e) {
+			meterRegistry.counter("ambulance.assignments.parse_error.total").increment();
+			log.error("Malformed assignment message — discarding: {}", message, e);
+			return;
+		}
+
 		meterRegistry.counter("ambulance.assignments.consumed.total").increment();
 		String ambulanceId = assignment.getAmbulanceId();
 		String emergencyId = assignment.getEmergencyId();
@@ -75,8 +84,9 @@ public class AmbulanceAssignmentListener {
 			return;
 		}
 		
-		// Send ACCEPTED ACK to dispatch service
-		sendAssignmentAck(emergencyId, ambulanceId, "ACCEPTED", assignedExpectedVersion + 1);
+		// Read the ACTUAL version from Redis after atomic assignment — don't assume +1
+		long versionAfterAssign = ambulanceStateTracker.getVersion(ambulanceId);
+		sendAssignmentAck(emergencyId, ambulanceId, "ACCEPTED", versionAfterAssign);
 
 		// Set destination for movement simulator from assignment event
 		double estimatedDurationSeconds = 0;
@@ -131,39 +141,69 @@ public class AmbulanceAssignmentListener {
 			}
 		}
 
-		scheduler.schedule(() -> transitionToOnRoute(ambulanceId, assignedExpectedVersion + 1), onRouteDelay, TimeUnit.SECONDS);
-		scheduler.schedule(() -> transitionToArrived(ambulanceId, assignedExpectedVersion + 2), arrivedDelay, TimeUnit.SECONDS);
-		scheduler.schedule(() -> completeTrip(assignment, assignedExpectedVersion + 3), completedDelay, TimeUnit.SECONDS);
+		// FIX: Read version fresh from Redis inside each lambda instead of pre-computing offsets.
+		// Pre-computing (version+1, version+2, version+3) breaks if any external event changes
+		// the version before the scheduled task fires (auto-heal, race condition, etc.)
+		scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ON_ROUTE, emergencyId), onRouteDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ARRIVED, emergencyId), arrivedDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> completeTrip(assignment, emergencyId), completedDelay, TimeUnit.SECONDS);
 	}
 
-	private void transitionToOnRoute(String ambulanceId, long expectedVersion) {
-		ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.ON_ROUTE, expectedVersion);
+	/**
+	 * Reads current version from Redis at execution time — safe against version drift
+	 * from auto-heal or other concurrent events between scheduling and execution.
+	 */
+	private void safeTransition(String ambulanceId, AmbulanceStatus targetStatus, String emergencyId) {
+		long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);
+		AmbulanceStatus currentStatus = ambulanceStateTracker.getStatus(ambulanceId);
+
+		// Guard: only transition if ambulance is still serving this emergency
+		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
+		if (!emergencyId.equals(activeEmergencyId)) {
+			log.warn("Skipping {} transition for {} — activeEmergency mismatch (expected={} actual={})",
+					targetStatus, ambulanceId, emergencyId, activeEmergencyId);
+			return;
+		}
+
+		boolean ok = ambulanceStateTracker.transition(ambulanceId, targetStatus, currentVersion);
+		if (!ok) {
+			log.warn("Transition to {} failed for {} at version {} (currentStatus={}). " +
+							"Auto-heal will recover if stuck.",
+					targetStatus, ambulanceId, currentVersion, currentStatus);
+		}
 	}
 
-	private void transitionToArrived(String ambulanceId, long expectedVersion) {
-		ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.ARRIVED, expectedVersion);
-	}
-
-	private void completeTrip(AssignmentEvent assignment, long expectedVersion) {
+	private void completeTrip(AssignmentEvent assignment, String emergencyId) {
 		String ambulanceId = assignment.getAmbulanceId();
-		boolean completed = ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.COMPLETED, expectedVersion);
+
+		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
+		if (!emergencyId.equals(activeEmergencyId)) {
+			log.warn("Skipping COMPLETED transition for {} — activeEmergency mismatch", ambulanceId);
+			return;
+		}
+
+		long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);
+		boolean completed = ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.COMPLETED, currentVersion);
 		if (!completed) {
+			log.warn("COMPLETED transition failed for {} — auto-heal will recover", ambulanceId);
 			return;
 		}
 
 		long completionVersion = ambulanceStateTracker.getVersion(ambulanceId);
-		CompletionEvent completion = new CompletionEvent(ambulanceId, assignment.getEmergencyId(), "COMPLETED",
-				completionVersion);
+		CompletionEvent completion = new CompletionEvent(ambulanceId, assignment.getEmergencyId(),
+				"COMPLETED", completionVersion);
 		ambulanceProducer.sendCompletion(completion);
 		meterRegistry.counter("ambulance.completions.published.total").increment();
 		redisTemplate.delete(activeEmergencyKey(ambulanceId));
-
-		// Clear destination - ambulance can now patrol
 		movementSimulator.clearDestination(ambulanceId);
 
-		ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.AVAILABLE, completionVersion);
-		log.info("Completion published ambulanceId={} emergencyId={} completionVersion={}", ambulanceId,
-				assignment.getEmergencyId(), completionVersion);
+		// Immediately transition back to AVAILABLE
+		boolean available = ambulanceStateTracker.transition(ambulanceId, AmbulanceStatus.AVAILABLE, completionVersion);
+		if (!available) {
+			log.warn("AVAILABLE transition failed for {} after completion — auto-heal will recover", ambulanceId);
+		}
+
+		log.info("Trip completed ambulanceId={} emergencyId={}", ambulanceId, assignment.getEmergencyId());
 	}
 
 	@PreDestroy

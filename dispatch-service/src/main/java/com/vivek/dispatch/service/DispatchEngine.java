@@ -132,8 +132,8 @@ public class DispatchEngine {
 					distanceKm, assignmentVersion, emergency.getLat(), emergency.getLon());
 				kafkaTemplate.send(ASSIGNMENT_TOPIC, emergency.getEmergencyId(), assignment).get(5, TimeUnit.SECONDS);
 				
-				// Immediately mark ambulance as ASSIGNED in Redis to prevent double-assignment
-				redisTemplate.opsForValue().set(statusKey(ambulanceId), "ASSIGNED");
+				// Don't set status here - let ambulance service handle it atomically with activeEmergencyId
+				// to avoid race condition with auto-heal detecting orphan assignments
 				
 				acknowledgeEmergency(emergency);
 				assignmentPublishedCounter.increment();
@@ -204,7 +204,15 @@ public class DispatchEngine {
 
 	private void enqueueEmergency(EmergencyEvent emergency) {
 		try {
-			redisTemplate.opsForList().rightPush(queueKey(emergency.getPriority()), objectMapper.writeValueAsString(emergency));
+			String payload = objectMapper.writeValueAsString(emergency);
+			redisTemplate.opsForList().rightPush(queueKey(emergency.getPriority()), payload);
+			
+			// Store a copy keyed by emergencyId — used if we need to requeue after a REJECTED ACK
+			redisTemplate.opsForValue().set(
+				"emergency:payload:" + emergency.getEmergencyId(),
+				payload,
+				Duration.ofHours(2)  // TTL: longer than any reasonable dispatch cycle
+			);
 		} catch (JsonProcessingException e) {
 			log.error("Emergency enqueue serialization failed emergencyId={}", emergency.getEmergencyId(), e);
 		}
@@ -381,13 +389,44 @@ public class DispatchEngine {
 	}
 
 
+	/**
+	 * Called when an assignment ACK comes back REJECTED.
+	 * Clears the idempotency key AND re-pushes the emergency back onto its priority queue
+	 * so it gets dispatched to a different ambulance.
+	 * Previously this only deleted the idempotency key, leaving the emergency orphaned.
+	 */
 	public void requeueEmergency(String emergencyId) {
-		// Remove idempotency key to allow re-processing
+		// 1. Remove idempotency key so re-processing is allowed
 		String idempotencyKey = "idempotency:emergency:" + emergencyId;
 		redisTemplate.delete(idempotencyKey);
 
-		log.info("Emergency re-queued for dispatch after rejection emergencyId={}", emergencyId);
-		meterRegistry.counter("dispatch.emergencies.requeued.total").increment();
+		// 2. Also clear the ambulance status that was pre-set to ASSIGNED by dispatch
+		//    (The ambulance FSM rejected the assignment, so it's still AVAILABLE in its own Redis,
+		//     but the dispatch-service set ambulance:X:status=ASSIGNED optimistically — roll it back)
+		String ackKey = "assignment:ack:" + emergencyId;
+		redisTemplate.delete(ackKey);
+
+		// 3. Look up the original emergency payload from the pending queue or reconstruct from DB
+		//    We store a copy keyed by emergencyId at enqueue time for exactly this requeue scenario
+		String payloadKey = "emergency:payload:" + emergencyId;
+		String savedPayload = redisTemplate.opsForValue().get(payloadKey);
+
+		if (savedPayload == null) {
+			log.error("Cannot requeue emergencyId={} — payload not found in Redis. " +
+					  "Emergency may be lost! Check PostgreSQL emergencies table for manual recovery.", emergencyId);
+			meterRegistry.counter("dispatch.emergencies.requeue.lost.total").increment();
+			return;
+		}
+
+		try {
+			EmergencyEvent event = objectMapper.readValue(savedPayload, EmergencyEvent.class);
+			enqueueEmergency(event);
+			meterRegistry.counter("dispatch.emergencies.requeued.total").increment();
+			log.info("Emergency re-queued after rejection emergencyId={} priority={}", emergencyId, event.getPriority());
+		} catch (JsonProcessingException e) {
+			log.error("Failed to deserialize saved payload for requeue emergencyId={}", emergencyId, e);
+			meterRegistry.counter("dispatch.emergencies.requeue.lost.total").increment();
+		}
 	}
 
 }

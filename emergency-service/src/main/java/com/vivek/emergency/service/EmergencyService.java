@@ -1,8 +1,12 @@
 package com.vivek.emergency.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vivek.emergency.dto.EmergencyEvent;
 import com.vivek.emergency.entity.Emergency;
+import com.vivek.emergency.entity.OutboxEvent;
 import com.vivek.emergency.repository.EmergencyRepository;
+import com.vivek.emergency.repository.OutboxEventRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,36 +21,67 @@ import java.util.Optional;
 @Slf4j
 public class EmergencyService {
     
+    private static final String EMERGENCY_TOPIC = "emergency-topic";
+    
     private final EmergencyRepository emergencyRepository;
-    private final EmergencyProducer emergencyProducer;
+    private final OutboxEventRepository outboxRepository;
+    private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
     
+    /**
+     * Saves emergency + outbox entry in ONE transaction.
+     * The OutboxPublisher will pick up the outbox entry and push to Kafka.
+     * This guarantees no emergency is ever saved to DB but silently lost from Kafka.
+     */
     @Transactional
     public Emergency createEmergency(EmergencyEvent event) {
         log.info("Creating emergency: {}", event.getEmergencyId());
-        
-        // 1. Save to PostgreSQL
+
+        // Check for duplicates
+        if (emergencyRepository.findByEmergencyId(event.getEmergencyId()).isPresent()) {
+            log.warn("Duplicate emergencyId received, returning existing: {}", event.getEmergencyId());
+            return emergencyRepository.findByEmergencyId(event.getEmergencyId()).get();
+        }
+
+        // 1. Save emergency to PostgreSQL
         Emergency emergency = new Emergency();
         emergency.setEmergencyId(event.getEmergencyId());
         emergency.setCoordinates(event.getLat(), event.getLon());
         emergency.setPriority(event.getPriority());
         emergency.setStatus("PENDING");
-        
         Emergency saved = emergencyRepository.save(emergency);
-        log.info("Emergency saved to PostgreSQL: {}", saved.getId());
-        
-        // 2. Publish to Kafka (dual-write pattern)
+
+        // 2. Write outbox entry in THE SAME TRANSACTION — atomic with the save above
         try {
-            emergencyProducer.sendEmergency(event);
-            log.info("Emergency published to Kafka: {}", event.getEmergencyId());
-        } catch (Exception e) {
-            log.error("Failed to publish emergency to Kafka: {}", event.getEmergencyId(), e);
-            meterRegistry.counter("emergency.kafka.publish.failed").increment();
-            // Note: In Phase 2, we'll use outbox pattern to handle this properly
+            String payload = objectMapper.writeValueAsString(event);
+            OutboxEvent outbox = OutboxEvent.of("EMERGENCY", saved.getEmergencyId(), EMERGENCY_TOPIC, payload);
+            outboxRepository.save(outbox);
+        } catch (JsonProcessingException e) {
+            // Throwing here rolls back BOTH the emergency save and the outbox write — correct behaviour
+            throw new RuntimeException("Failed to serialize emergency event for outbox: " + event.getEmergencyId(), e);
         }
-        
+
         meterRegistry.counter("emergency.created.total").increment();
+        log.info("Emergency + outbox entry saved atomically: {}", saved.getEmergencyId());
         return saved;
+    }
+    
+    @Transactional
+    public void updateStatus(String emergencyId, String status, String assignedAmbulanceId) {
+        emergencyRepository.findByEmergencyId(emergencyId).ifPresentOrElse(e -> {
+            e.setStatus(status);
+            if (assignedAmbulanceId != null) {
+                e.setAssignedAmbulanceId(assignedAmbulanceId);
+                if ("ASSIGNED".equals(status)) {
+                    e.setAssignmentTimestamp(java.time.LocalDateTime.now());
+                }
+            }
+            if ("COMPLETED".equals(status)) {
+                e.setCompletedAt(java.time.LocalDateTime.now());
+            }
+            emergencyRepository.save(e);
+            log.info("Emergency status updated: {} -> {}", emergencyId, status);
+        }, () -> log.warn("Emergency not found for status update: {}", emergencyId));
     }
     
     public Optional<Emergency> findByEmergencyId(String emergencyId) {

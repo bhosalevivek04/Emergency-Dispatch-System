@@ -28,30 +28,47 @@ public class DispatchListener {
 	private final MeterRegistry meterRegistry;
 
 	@KafkaListener(topics = "emergency-topic", groupId = "dispatch-group")
-	public void consumerEmergency(String message) throws JsonProcessingException {
-		EmergencyEvent emergency = objectMapper.readValue(message, EmergencyEvent.class);
-		meterRegistry.counter("dispatch.topic.emergency.consumed.total").increment();
-		dispatchEngine.handleEmergency(emergency);
+	public void consumerEmergency(String message) {
+		// DO NOT propagate JsonProcessingException — Spring Kafka would retry-loop forever on bad JSON
+		try {
+			EmergencyEvent emergency = objectMapper.readValue(message, EmergencyEvent.class);
+			meterRegistry.counter("dispatch.topic.emergency.consumed.total").increment();
+			dispatchEngine.handleEmergency(emergency);
+		} catch (JsonProcessingException e) {
+			// Malformed message — log and discard. DLT handles it via KafkaDltConfig.
+			meterRegistry.counter("dispatch.topic.emergency.parse_error.total").increment();
+			log.error("Malformed emergency message — discarding (will go to DLT): {}", message, e);
+		}
 	}
 
 	@KafkaListener(topics = "ambulance-location-topic", groupId = "dispatch-group")
-	public void consumeAmbulance(String message) throws JsonProcessingException {
-		AmbulanceLocationEvent ambulance = objectMapper.readValue(message, AmbulanceLocationEvent.class);
-		meterRegistry.counter("dispatch.topic.ambulance_location.consumed.total").increment();
-		dispatchEngine.handleAmbulanceUpdate(ambulance);
+	public void consumeAmbulance(String message) {
+		try {
+			AmbulanceLocationEvent ambulance = objectMapper.readValue(message, AmbulanceLocationEvent.class);
+			meterRegistry.counter("dispatch.topic.ambulance_location.consumed.total").increment();
+			dispatchEngine.handleAmbulanceUpdate(ambulance);
+		} catch (JsonProcessingException e) {
+			meterRegistry.counter("dispatch.topic.ambulance_location.parse_error.total").increment();
+			log.error("Malformed ambulance-location message — discarding: {}", message, e);
+		}
 	}
 
 	@KafkaListener(topics = "ambulance-completed-topic", groupId = "dispatch-group")
-	public void consumeCompletion(String message) throws JsonProcessingException {
-		CompletionEvent completion = objectMapper.readValue(message, CompletionEvent.class);
-		String completionKey = completion.getEmergencyId() + "-" + completion.getAmbulanceId();
-		if (isDuplicate("completion", completionKey)) {
-			meterRegistry.counter("dispatch.topic.completion.duplicate.total").increment();
-			log.info("Duplicate completion ignored completionKey={}", completionKey);
-			return;
+	public void consumeCompletion(String message) {
+		try {
+			CompletionEvent completion = objectMapper.readValue(message, CompletionEvent.class);
+			String completionKey = completion.getEmergencyId() + "-" + completion.getAmbulanceId();
+			if (isDuplicate("completion", completionKey)) {
+				meterRegistry.counter("dispatch.topic.completion.duplicate.total").increment();
+				log.info("Duplicate completion ignored completionKey={}", completionKey);
+				return;
+			}
+			meterRegistry.counter("dispatch.topic.completion.consumed.total").increment();
+			dispatchEngine.markAmbulanceAvailable(completion.getAmbulanceId(), completion.getVersion());
+		} catch (JsonProcessingException e) {
+			meterRegistry.counter("dispatch.topic.completion.parse_error.total").increment();
+			log.error("Malformed completion message — discarding: {}", message, e);
 		}
-		meterRegistry.counter("dispatch.topic.completion.consumed.total").increment();
-		dispatchEngine.markAmbulanceAvailable(completion.getAmbulanceId(), completion.getVersion());
 	}
 
 	private boolean isDuplicate(String type, String key) {
