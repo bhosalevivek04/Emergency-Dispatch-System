@@ -28,12 +28,20 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
 
         if (request instanceof ServletServerHttpRequest servletRequest) {
             HttpServletRequest httpRequest = servletRequest.getServletRequest();
+            
+            // Allow SockJS handshake endpoints (info, iframe) without authentication
+            String path = httpRequest.getRequestURI();
+            if (path.endsWith("/info") || path.contains("/iframe")) {
+                log.debug("Allowing SockJS handshake endpoint: {}", path);
+                return true;
+            }
+            
             String rolesHeader = httpRequest.getHeader(ROLES_HEADER);
 
             // If no roles header, reject connection in production
             // In development, the API Gateway should set this header
             if (rolesHeader == null || rolesHeader.isBlank()) {
-                log.warn("WebSocket connection rejected: Missing X-User-Roles header");
+                log.warn("WebSocket connection rejected: Missing X-User-Roles header for path: {}", path);
                 return false;
             }
 

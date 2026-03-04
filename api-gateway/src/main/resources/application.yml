@@ -36,6 +36,14 @@ spring:
           filters:
             - RewritePath=/api/ambulances(?<segment>/?.*), /ambulance${segment}
 
+        # Ambulance Diagnostic Routes
+        - id: ambulance-diagnostic
+          uri: ${AMBULANCE_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/diagnostic,/diagnostic/**
+          filters:
+            - RewritePath=/diagnostic(?<segment>/?.*), /diagnostic${segment}
+
         # Tracking Service Routes
         - id: tracking-service
           uri: ${TRACKING_SERVICE_URL:http://localhost:8085}
@@ -49,10 +57,12 @@ spring:
           uri: ${TRACKING_SERVICE_URL:ws://localhost:8085}
           predicates:
             - Path=/ws/**
+          filters:
+            - RewritePath=/ws(?<segment>/?.*), ${segment}
 
         # Notification Service Routes
         - id: notification-service
-          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8085}
           predicates:
             - Path=/api/notifications,/api/notifications/**
           filters:

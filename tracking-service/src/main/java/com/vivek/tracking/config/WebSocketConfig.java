@@ -16,14 +16,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 		// Native WebSocket endpoint with SockJS
 		registry.addEndpoint("/ws")
 			.setAllowedOriginPatterns("*")  // Allow all origins for development
-			.addInterceptors(new WebSocketAuthInterceptor())
+			// Temporarily remove auth interceptor for testing
+			// .addInterceptors(new WebSocketAuthInterceptor())
 			.withSockJS()
 			.setSessionCookieNeeded(false);
 		
 		// SockJS fallback endpoint
 		registry.addEndpoint("/ws-sockjs")
 			.setAllowedOriginPatterns("*")  // Allow all origins for development
-			.addInterceptors(new WebSocketAuthInterceptor())
+			// Temporarily remove auth interceptor for testing
+			// .addInterceptors(new WebSocketAuthInterceptor())
 			.withSockJS()
 			.setSessionCookieNeeded(false);
 	}

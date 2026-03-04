@@ -1,465 +1,183 @@
-Let me read the actual current state of the codebase to see exactly what's done and what still needs fixing.Good. Now I have everything. Let me produce all 4 remaining files with precise, complete code.
+Let me do a thorough scan of the current frontend and backend capabilities before making the plan.Now I have the complete picture of everything — frontend, backend, APIs, roles, routing. Here's the full plan:
 
 ---
 
-## ✅ Remaining Fixes — Complete Updated Code
+# 🗺️ Complete Frontend Rebuild & Feature Plan
 
-Here are the 4 files that still need changing. These are production-ready, drop-in replacements.
+## What the Frontend Currently Is
+
+A single-purpose **tracking-only app** — no login, no roles, hardcoded to `localhost:8085`, talks directly to the tracking service bypassing the gateway entirely. It shows ambulances on a map and has a simulation panel. That's it.
 
 ---
 
-### FILE 1 — `notification-service/src/main/java/com/vivek/notification/listener/NotificationListener.java`
+## What Needs to Be Built
 
-**Problem:** `throws Exception` on the listener method causes Spring Kafka to retry the message on any failure, including bad JSON. The catch block re-throws, making the `try/catch` pointless.
+### The 3 Role-Based Dashboards
 
-```java
-package com.vivek.notification.listener;
+Your backend already supports 3 roles. The frontend needs to match:
 
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+| Role | What they do | Dashboard focus |
+|------|-------------|----------------|
+| `ADMIN` | Full system access | Everything — monitoring, users, fleet, system health |
+| `DISPATCHER` | Create emergencies, watch fleet, assign | Emergency creation + live map + fleet status |
+| `AMBULANCE_DRIVER` | See their assignment, update location | Single ambulance view + their active mission |
 
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
+---
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.notification.dto.AssignmentEvent;
+## Phase 1 — Foundation (Do This First)
 
-@Component
-@Slf4j
-@RequiredArgsConstructor
-public class NotificationListener {
+**Goal: Auth + routing + shared API layer. Everything else depends on this.**
 
-    private final ObjectMapper objectMapper;
-    private final MeterRegistry meterRegistry;
+### 1.1 — Auth Pages
+- **Login page** — username + password → `POST /auth/login` via gateway (`:8080`) → store `accessToken`, `refreshToken`, `username`, `roles` in memory (not localStorage — your environment doesn't support it, use React context/state)
+- **Auto token refresh** — intercept 401 responses → `POST /auth/refresh` → retry original request
+- **Logout** — `POST /auth/logout` → clear state → redirect to login
 
-    @KafkaListener(topics = "ambulance-assigned-topic", groupId = "notification-group")
-    public void consumeAssignment(String message) {
-        // DO NOT declare `throws Exception` — Spring Kafka retries indefinitely on any thrown exception.
-        // Malformed JSON must be caught and discarded here; KafkaDltConfig handles retryable errors.
-        AssignmentEvent event;
-        try {
-            event = objectMapper.readValue(message, AssignmentEvent.class);
-        } catch (JsonProcessingException e) {
-            meterRegistry.counter("notification.assignments.parse_error.total").increment();
-            log.error("Malformed assignment message in notification-service — discarding (goes to DLT): {}", message, e);
-            return; // discard — do not rethrow
-        }
+### 1.2 — Role-Based Router
+After login, read `roles` from the auth response and route to the correct dashboard:
+```
+ADMIN        → /dashboard/admin
+DISPATCHER   → /dashboard/dispatcher
+AMBULANCE_DRIVER → /dashboard/driver
+```
+Each dashboard is a completely separate layout. No user should ever see controls they can't use.
 
-        try {
-            sendNotification(event);
-            meterRegistry.counter("notification.assignments.consumed.total").increment();
-            meterRegistry.counter("notification.sent.total").increment();
-            log.info("Notification dispatched emergencyId={} ambulanceId={} distanceKm={} version={}",
-                    event.getEmergencyId(), event.getAmbulanceId(),
-                    event.getDistanceKm(), event.getVersion());
-        } catch (Exception e) {
-            // Rethrow only for genuinely retryable errors (e.g. downstream SMS/push service failure).
-            // KafkaDltConfig will retry 3 times with 2s backoff, then send to DLT.
-            meterRegistry.counter("notification.consume.failures.total").increment();
-            log.error("Failed to send notification emergencyId={} — will retry via KafkaDltConfig",
-                    event.getEmergencyId(), e);
-            throw new RuntimeException("Notification send failed, triggering retry", e);
-        }
-    }
+### 1.3 — API Service Layer
+Replace the hardcoded `localhost:8085` calls with a unified API client that:
+- Points everything at the gateway `http://localhost:8080`
+- Attaches `Authorization: Bearer <token>` to every request automatically
+- Handles 401 → refresh → retry
+- Has typed functions for every endpoint: `createEmergency()`, `getAvailableAmbulances()`, `getFleetStatus()`, etc.
 
-    /**
-     * Notification dispatch stub.
-     * Replace with real SMS/push/webhook logic in production.
-     * Throwing here intentionally triggers Kafka retry (unlike parse errors above).
-     */
-    private void sendNotification(AssignmentEvent event) {
-        // TODO: integrate with Twilio / FCM / webhook
-        log.info("[STUB] Would send SMS/push to caller: emergencyId={} ambulanceId={} eta={}km",
-                event.getEmergencyId(), event.getAmbulanceId(), event.getDistanceKm());
-    }
-}
+### 1.4 — Fix nginx.conf
+Currently proxies to `tracking-service:8085` directly. Needs to proxy `/api` and `/auth` to `api-gateway:8080` instead so JWT gets validated on every request.
+
+---
+
+## Phase 2 — Dispatcher Dashboard
+
+**The most feature-rich role — main operational interface.**
+
+### 2.1 — Live Map (upgrade existing)
+Keep the Leaflet map but add:
+- Emergency markers (red pin) showing location + priority badge (HIGH/MEDIUM/LOW)
+- Ambulance markers colored by status: green=AVAILABLE, yellow=ASSIGNED, red=ON_ROUTE
+- Click ambulance → popup shows: ID, status, current speed, active emergency ID
+- Click emergency marker → popup shows: ID, priority, status, assigned ambulance
+
+### 2.2 — Create Emergency Panel
+Form with:
+- Click-on-map to pick coordinates (instead of typing lat/lon)
+- Priority selector (HIGH / MEDIUM / LOW)
+- Submit → `POST /api/emergencies` with JWT
+- On success: new emergency marker appears on map instantly
+- Show toast: "Emergency EMG-XXX created — dispatching..."
+
+### 2.3 — Emergency Queue Panel
+Real-time list of all active emergencies pulled from `GET /api/emergencies/status/PENDING` and `GET /api/emergencies/status/ASSIGNED`:
+- Sorted by priority (HIGH first)
+- Each row shows: ID, priority badge, status, time since creation, assigned ambulance (or "Pending")
+- Color-coded rows: red=HIGH, orange=MEDIUM, blue=LOW
+
+### 2.4 — Fleet Status Panel
+From `GET /api/ambulances/available` and `GET /api/ambulances/fleet`:
+- Summary counts: X Available / Y Assigned / Z On Route
+- Per-ambulance row: ID, status pill, current speed if moving
+
+---
+
+## Phase 3 — Admin Dashboard
+
+**Operational + system oversight.**
+
+### 3.1 — Everything in Dispatcher Dashboard (Admin inherits all)
+Admin can do everything a dispatcher can.
+
+### 3.2 — Fleet Management Panel
+- `GET /api/ambulances/fleet` → full fleet table with version numbers
+- `POST /diagnostic/init-fleet` button → reinitialize fleet (admin only)
+- `GET /diagnostic/fleet-status` → detailed state per ambulance
+
+### 3.3 — System Health Panel
+Poll all actuator health endpoints via gateway:
+- `GET /actuator/health` per service
+- Show green/red status indicator per service (emergency, dispatch, ambulance, tracking, notification, auth)
+- Kafka consumer lag indicator if available
+
+### 3.4 — Metrics Dashboard
+Link out (or embed iframe) to Grafana at `:3001` for deeper metrics.
+
+---
+
+## Phase 4 — Ambulance Driver Dashboard
+
+**Mobile-first, simple, mission-focused.**
+
+### 4.1 — My Active Mission View
+- `GET /api/emergencies/{emergencyId}` → show assigned emergency details
+- Emergency location on map with route line to it
+- ETA countdown based on current position + OSRM distance
+- Status: "ASSIGNED → ON_ROUTE → ARRIVED → COMPLETED"
+
+### 4.2 — Location Updates (fix existing simulation)
+The current `simulation.js` posts to `localhost:8085/tracking/location` directly without auth. Fix it to:
+- Post to `http://localhost:8080/api/tracking/location` (via gateway)
+- Include `Authorization: Bearer <token>` header
+- Works for both real GPS (future) and simulated movement now
+
+### 4.3 — Simple Map View
+Stripped-down map showing only:
+- Their own ambulance position (no clutter from other ambulances)
+- Route line to the emergency
+- Progress indicator (same as current InfoPanel but fullscreen)
+
+---
+
+## Phase 5 — Real-Time Updates Across All Dashboards
+
+### 5.1 — Authenticated WebSocket
+Current WebSocket connects to `localhost:8085/ws-sockjs` directly, no auth header. Fix:
+- Connect through gateway WebSocket route: `ws://localhost:8080/ws/ws-sockjs`
+- Pass JWT as a query param or STOMP header: `stompClient.connectHeaders = { Authorization: 'Bearer ' + token }`
+
+### 5.2 — Emergency Status Updates via WebSocket
+Currently only ambulance location is pushed over WebSocket. You should also push emergency status changes so dispatchers see `PENDING → ASSIGNED → COMPLETED` in real-time without polling. This requires a small backend addition: publish to a `/topic/emergencies` STOMP topic from `EmergencyStatusListener`.
+
+---
+
+## Recommended Tech Stack for Rebuild
+
+Stay with React (you're already there) but add:
+
+| Need | Library | Why |
+|------|---------|-----|
+| Routing | `react-router-dom v6` | Role-based route protection |
+| State | React Context + `useReducer` | Auth state, no localStorage needed |
+| UI components | Tailwind CSS (CDN) | Already configured in your artifacts |
+| Notifications | Custom toast component | Simple, no extra dep |
+| HTTP client | Native `fetch` with interceptor wrapper | Already works |
+
+No need for Redux — React context is sufficient for auth state + ambulance data.
+
+---
+
+## Recommended Build Order
+
+```
+Week 1:  Phase 1 (Auth + API layer + routing)
+Week 2:  Phase 2 (Dispatcher dashboard — highest value)
+Week 3:  Phase 3 (Admin dashboard — builds on Phase 2)
+Week 4:  Phase 4 (Driver dashboard) + Phase 5 (Real-time fixes)
 ```
 
 ---
 
-### FILE 2 — `tracking-service/src/main/java/com/vivek/tracking/listener/TrackingLocationListener.java`
+## Quick Wins You Can Do Right Now (1–2 hours each)
 
-**Problem:** `throws JsonProcessingException` propagates out of the `@KafkaListener`, causing Spring Kafka to retry every bad-JSON message infinitely until it hits the DLT retry limit — burning cycles on something that will never succeed.
-
-```java
-package com.vivek.tracking.listener;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Component;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.tracking.dto.AmbulanceLocationEvent;
-import com.vivek.tracking.service.TrackingCacheService;
-
-@Component
-@Slf4j
-@RequiredArgsConstructor
-public class TrackingLocationListener {
-
-    private final ObjectMapper objectMapper;
-    private final TrackingCacheService trackingCacheService;
-    private final SimpMessagingTemplate messagingTemplate;
-    private final MeterRegistry meterRegistry;
-
-    @Value("${tracking.listener.log.enabled:true}")
-    private boolean logEnabled;
-
-    @KafkaListener(topics = "ambulance-location-topic", groupId = "tracking-group")
-    public void consumeAmbulanceLocation(String message) {
-        // DO NOT declare `throws JsonProcessingException`.
-        // Bad JSON on a high-frequency location topic (every 1-3s per ambulance) would cause
-        // a storm of retries + DLT writes. Parse errors must be discarded immediately.
-        AmbulanceLocationEvent event;
-        try {
-            event = objectMapper.readValue(message, AmbulanceLocationEvent.class);
-        } catch (JsonProcessingException e) {
-            meterRegistry.counter("tracking.location.parse_error.total").increment();
-            log.error("Malformed location message in tracking-service — discarding: {}", message, e);
-            return; // discard — do not retry bad JSON
-        }
-
-        // Cache latest position in Redis (or in-memory fallback)
-        try {
-            trackingCacheService.saveLatest(event);
-        } catch (Exception e) {
-            // Cache failure is non-fatal — we can still broadcast to WebSocket clients
-            meterRegistry.counter("tracking.cache.save_error.total").increment();
-            log.warn("Failed to cache location for ambulanceId={} — WebSocket broadcast will still proceed",
-                    event.getAmbulanceId(), e);
-        }
-
-        // Broadcast to all connected WebSocket clients
-        try {
-            messagingTemplate.convertAndSend("/topic/location", event);
-            meterRegistry.counter("tracking.websocket.broadcast.total").increment();
-        } catch (Exception e) {
-            // WebSocket failure is also non-fatal — don't fail the Kafka consumer over it
-            meterRegistry.counter("tracking.websocket.broadcast_error.total").increment();
-            log.warn("WebSocket broadcast failed for ambulanceId={}", event.getAmbulanceId(), e);
-        }
-
-        meterRegistry.counter("tracking.location.consumed.total").increment();
-
-        if (logEnabled) {
-            log.debug("Location processed ambulanceId={} lat={} lon={}",
-                    event.getAmbulanceId(), event.getLatitude(), event.getLongitude());
-        }
-    }
-}
-```
+1. **Fix nginx.conf** to proxy through gateway instead of directly to tracking-service — 15 min, immediately makes auth work in the existing app
+2. **Add a Login page** with just username/password → store token in React state → unblock everything else
+3. **Fix `simulation.js`** to attach JWT header — makes driver location updates actually go through auth
 
 ---
 
-### FILE 3 — `docker-compose.yml` (complete replacement)
-
-**Problems fixed:**
-- `notification-service` and `tracking-service` missing `networks: - dispatch-network` → they can't reach Kafka or Redis by hostname
-- `api-gateway` missing `networks` → can't reach any backend service by hostname
-- `prometheus`, `grafana`, `renderer`, `tracking-client` missing `networks` → Prometheus can't scrape services
-- Hardcoded credentials replaced with `.env` variables
-- Hardcoded `CLUSTER_ID` replaced with env var
-- `KAFKA_ADVERTISED_LISTENERS` fixed from `localhost:9092` to `kafka:9092` for inter-container communication
-- `tracking-service` uses wrong env var name (`SPRING_DATA_REDIS_HOST` vs what `application.yml` expects as `REDIS_HOST`)
-
-```yaml
-version: '3.8'
-
-services:
-
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_NODE_ID: 1
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
-
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      # FIX: was localhost:9092 — other containers must reach Kafka by hostname "kafka", not "localhost"
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    networks:
-      - dispatch-network
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-
-  redis:
-    image: redis:7
-    container_name: redis
-    ports:
-      - "6379:6379"
-    networks:
-      - dispatch-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  postgres:
-    image: postgis/postgis:15-3.3
-    container_name: postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db:/docker-entrypoint-initdb.d
-    networks:
-      - dispatch-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  emergency-service:
-    build: ./emergency-service
-    container_name: emergency-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  dispatch-service:
-    build: ./dispatch-service
-    container_name: dispatch-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8083:8083"
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  ambulance-service:
-    build: ./ambulance-service
-    container_name: ambulance-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8082:8082"
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_DATA_REDIS_PORT: 6379
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  notification-service:
-    build: ./notification-service
-    container_name: notification-service
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8084:8084"
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    # FIX: was missing — without this, "kafka" hostname is unresolvable inside notification-service
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  tracking-service:
-    build: ./tracking-service
-    container_name: tracking-service
-    depends_on:
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8085:8085"
-    environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      # FIX: tracking-service application.yml uses REDIS_HOST / REDIS_PORT, not SPRING_DATA_REDIS_*
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-    # FIX: was missing — without this, "kafka" and "redis" hostnames are unresolvable
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  api-gateway:
-    build: ./api-gateway
-    container_name: api-gateway
-    depends_on:
-      - emergency-service
-      - dispatch-service
-      - ambulance-service
-      - tracking-service
-      - notification-service
-    ports:
-      - "8080:8080"
-    environment:
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-      EMERGENCY_SERVICE_URL: http://emergency-service:8081
-      AMBULANCE_SERVICE_URL: http://ambulance-service:8082
-      DISPATCH_SERVICE_URL: http://dispatch-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
-      TRACKING_SERVICE_URL: http://tracking-service:8085
-    # FIX: was missing — without this, gateway can't reach any backend service by hostname
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    # FIX: was missing — Prometheus needs to reach service actuator endpoints by hostname
-    networks:
-      - dispatch-network
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3001:3000"  # FIX: was 3000:3000 — conflicts with tracking-client on port 3000
-    environment:
-      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
-      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
-      - GF_LOG_FILTERS=rendering:debug
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-    depends_on:
-      - prometheus
-      - renderer
-    networks:
-      - dispatch-network
-    restart: unless-stopped
-
-  renderer:
-    image: grafana/grafana-image-renderer:latest
-    container_name: grafana-renderer
-    networks:
-      - dispatch-network
-    restart: unless-stopped
-
-  tracking-client:
-    build: ./tracking-client
-    container_name: tracking-client
-    depends_on:
-      - tracking-service
-    ports:
-      - "3000:80"
-    networks:
-      - dispatch-network
-    restart: on-failure
-
-volumes:
-  kafka_data:
-  postgres_data:
-
-networks:
-  dispatch-network:
-    driver: bridge
-```
-
----
-
-### FILE 4 — `.env` *(new file — add to `.gitignore`)*
-
-```env
-# ─── PostgreSQL ───────────────────────────────────────────────
-POSTGRES_DB=emergency_dispatch
-POSTGRES_USER=dispatch_user
-POSTGRES_PASSWORD=change_me_before_deploying
-
-# ─── Kafka ────────────────────────────────────────────────────
-# Generate a fresh ID with: docker run --rm confluentinc/cp-kafka:7.6.0 kafka-storage random-uuid
-KAFKA_CLUSTER_ID=replace-with-your-own-uuid
-
-# ─── CORS ─────────────────────────────────────────────────────
-# Comma-separated. Add your deployed frontend URL here.
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://mobile-driver-app.onrender.com
-
-# ─── Grafana ──────────────────────────────────────────────────
-GRAFANA_PASSWORD=change_me_before_deploying
-```
-
-And add to your `.gitignore`:
-```
-# Secrets — never commit these
-.env
-*.env
-!.env.example
-```
-
----
-
-### Summary of what was actually wrong in these 4 files
-
-| # | File | Root cause | Effect if unfixed |
-|---|---|---|---|
-| 1 | `NotificationListener` | `throws Exception` declared + re-thrown | Every bad JSON message retries 3× then DLTs, consuming Kafka quota on unrecoverable errors |
-| 2 | `TrackingLocationListener` | `throws JsonProcessingException` declared | Same retry storm — on a high-frequency topic (every 1-3s per ambulance) this is especially damaging |
-| 3 | `docker-compose.yml` | `notification-service`, `tracking-service`, `api-gateway`, `prometheus` missing `networks: - dispatch-network` | Containers start fine but all hostname lookups (e.g. `kafka:9092`, `redis:6379`) fail with `UnknownHostException` at runtime; `KAFKA_ADVERTISED_LISTENERS: localhost:9092` makes Kafka unreachable inside the Docker network |
-| 4 | `.env` | Credentials hardcoded in `docker-compose.yml` | Secrets in version control; all envs share the same DB password and Kafka cluster ID |
+Want me to start coding any specific phase? I'd suggest starting with **Phase 1** (auth + API layer + login page) since everything else is blocked until that's done.

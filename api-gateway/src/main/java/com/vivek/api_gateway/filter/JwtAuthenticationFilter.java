@@ -25,7 +25,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     private static final List<String> EXCLUDED_PATHS = List.of(
             "/auth/",
             "/actuator/health",
-            "/actuator/info"
+            "/actuator/info",
+            "/ws/ws-sockjs/info",  // SockJS handshake endpoint
+            "/ws/ws-sockjs/"       // SockJS WebSocket endpoints
     );
 
     public JwtAuthenticationFilter(JwtService jwtService) {
