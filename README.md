@@ -1,239 +1,319 @@
-# Emergency Ambulance Dispatch System
+# Emergency Dispatch System
 
-A real-time microservices-based ambulance dispatch system with intelligent routing, live tracking, and dynamic state management.
-
-## Features
-
-- **Intelligent Dispatch**: Assigns nearest available ambulance based on real-time location and ETA
-- **Production-Grade Algorithm**: Redis GEO for O(log n) nearest search, idempotency checks, ACK flow
-- **Real-time Tracking**: Live ambulance location updates via WebSocket
-- **Dynamic State Transitions**: Realistic timing based on actual route distance (not hardcoded)
-- **Route Following**: Ambulances follow actual road routes (OSRM) or straight-line paths
-- **Microservices Architecture**: 6 independent services for scalability
-- **Event-Driven**: Kafka-based communication between services
-- **Live Map Visualization**: React + Leaflet frontend showing ambulances and routes
-- **Auto-Heal Recovery**: Automatic recovery from stuck states
-- **Distributed Locking**: Horizontal scaling support with Redis locks
-
-## System Rating: 9/10 ⭐
-
-**Production-ready** for city-scale emergency response deployment with:
-- ✅ Idempotency (prevents duplicate processing)
-- ✅ Redis GEO (scales to 10,000+ ambulances)
-- ✅ Assignment ACK flow (handles failures)
-- ✅ Atomic operations (no race conditions)
-- ✅ Auto-heal (automatic recovery)
-- ✅ < 2s latency, 100+ req/s throughput
-
-See [DISPATCH_ALGORITHM.md](docs/DISPATCH_ALGORITHM.md) for detailed analysis.
+A production-grade microservices-based emergency dispatch system built with Spring Boot, Kafka, Redis, and PostgreSQL.
 
 ## Architecture
 
-### Services (Ports)
-- **API Gateway** (8080): Entry point for all requests
-- **Emergency Service** (8081): Manages emergency requests
-- **Ambulance Service** (8082): Tracks ambulance locations and movement
-- **Dispatch Service** (8083): Intelligent ambulance assignment
-- **Notification Service** (8084): Sends notifications
-- **Tracking Service** (8085): WebSocket server for real-time updates
+### Services
+- **emergency-service** (8081) - Emergency management and creation
+- **ambulance-service** (8082) - Ambulance fleet management and FSM
+- **dispatch-service** (8083) - Automatic dispatch engine with priority queueing
+- **tracking-service** (8085) - Real-time location tracking with WebSocket
+- **auth-service** (8086) - JWT authentication with RS256
+- **api-gateway** (8080) - API Gateway with rate limiting and JWT validation
 
 ### Infrastructure
-- **Kafka**: Event streaming between services
-- **Redis**: Fast state storage (ambulance status, locations)
-- **OSRM**: Route calculation service (optional, falls back to straight-line)
+- **PostgreSQL** - Persistent storage
+- **Redis** - Distributed state management and caching
+- **Kafka** - Event streaming
+- **OSRM** - Route optimization
+
+## Features
+
+- ✅ Event-driven microservices architecture
+- ✅ Automatic dispatch with priority-based queueing (HIGH → MEDIUM → LOW)
+- ✅ Finite State Machine (FSM) for ambulance lifecycle
+- ✅ Real-time location tracking via WebSocket
+- ✅ JWT authentication with RS256 (asymmetric keys)
+- ✅ Service-level authorization (RBAC)
+- ✅ Distributed rate limiting (Redis-based)
+- ✅ Transactional outbox pattern
+- ✅ Idempotency handling
+- ✅ Atomic state transitions (Lua scripts)
+- ✅ Auto-heal mechanism for stuck ambulances
+- ✅ Prometheus metrics
+- ✅ Health checks
+
+## Prerequisites
+
+- Java 17+
+- Maven 3.8+
+- Docker & Docker Compose
+- PostgreSQL 15+
+- Redis 7+
+- Kafka 3.x
 
 ## Quick Start
 
-### Prerequisites
-- Java 17+
-- Maven
-- Docker & Docker Compose
-- Node.js 16+ (for frontend)
-
 ### 1. Start Infrastructure
+
 ```bash
-start-infrastructure.bat
+docker-compose up -d postgres redis kafka osrm-pune
 ```
-This starts Kafka, Redis, and OSRM.
 
 ### 2. Start Services
+
+Start services in Spring Tool Suite (STS) or via Maven:
+
 ```bash
-start-all-services.bat
+# Start in order
+cd emergency-service && mvn spring-boot:run
+cd ambulance-service && mvn spring-boot:run
+cd dispatch-service && mvn spring-boot:run
+cd tracking-service && mvn spring-boot:run
+cd auth-service && mvn spring-boot:run
+cd api-gateway && mvn spring-boot:run
 ```
-Or manually in separate terminals:
+
+### 3. Verify Services
+
 ```bash
-# Terminal 1 - Ambulance Service (start FIRST)
-cd ambulance-service
-mvnw spring-boot:run
-
-# Wait 30 seconds for ambulances to broadcast
-
-# Terminal 2 - Dispatch Service
-cd dispatch-service
-mvnw spring-boot:run
-
-# Terminal 3 - Emergency Service
-cd emergency-service
-mvnw spring-boot:run
-
-# Terminal 4 - Tracking Service
-cd tracking-service
-mvnw spring-boot:run
-
-# Terminal 5 - API Gateway
-cd api-gateway
-mvnw spring-boot:run
+# Check health
+curl http://localhost:8080/actuator/health
+curl http://localhost:8081/actuator/health
+curl http://localhost:8082/actuator/health
+curl http://localhost:8083/actuator/health
 ```
 
-### 3. Start Frontend
+## API Documentation
+
+### Authentication
+
 ```bash
-cd tracking-client
-npm install
-npm start
-```
-Open http://localhost:3000
+# Login
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"dispatcher1","password":"password123"}'
 
-### 4. Test
+# Response: { "token": "eyJhbGc..." }
+```
+
+### Create Emergency
+
 ```bash
-test-long-distance.bat
+curl -X POST http://localhost:8080/emergency \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "emergencyId": "EMG-001",
+    "lat": 18.5204,
+    "lon": 73.8567,
+    "priority": "HIGH"
+  }'
 ```
 
-## How It Works
+### Track Ambulance Location
 
-### 1. Emergency Created
+```bash
+curl -X POST http://localhost:8080/tracking/location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "ambulanceId": "AMB-101",
+    "latitude": 18.5204,
+    "longitude": 73.8567,
+    "timestamp": 1234567890
+  }'
 ```
-POST http://localhost:8080/api/emergencies
-{
-  "emergencyId": "EMG-001",
-  "lat": 18.5074,
-  "lon": 73.8077,
-  "priority": "HIGH"
-}
-```
-
-### 2. Dispatch Finds Nearest Ambulance
-- Checks all AVAILABLE ambulances
-- Calculates ETA using OSRM (or straight-line distance)
-- Assigns ambulance with minimum ETA
-
-### 3. Dynamic State Transitions
-Based on actual route duration:
-- **ASSIGNED** → **ON_ROUTE** (10% of journey)
-- **ON_ROUTE** → **ARRIVED** (90% of journey)
-- **ARRIVED** → **COMPLETED** (full journey + 30s)
-
-Example for 5km route (~10 minutes):
-- ON_ROUTE after 1 minute
-- ARRIVED after 9 minutes
-- COMPLETED after 10.5 minutes
-
-### 4. Real-time Movement
-- Ambulance moves along route at 25 m/s
-- Broadcasts location every 1 second (when moving)
-- Frontend shows live position and route path
 
 ## Configuration
 
-### OSRM Setup
-Place Pune map data in `osrm-data/pune.osm.pbf`.
+### Environment Variables
 
-If OSRM has wrong map data or fails:
-- System automatically falls back to straight-line calculation
-- Duration calculated from distance at 40 km/h average speed
-- Adds 30% for road curves and traffic
+Create `.env` file (see `.env.example`):
 
-### Ambulance Initial Positions
-Edit `AmbulanceMovementSimulator.java`:
-```java
-initializeAmbulance("AMB-101", 18.5204, 73.8567); // Shivajinagar
-initializeAmbulance("AMB-102", 18.5300, 73.8600); // Koregaon Park
-initializeAmbulance("AMB-103", 18.5100, 73.8500); // Deccan
+```env
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=emergency_dispatch
+DB_USER=dispatch_user
+DB_PASSWORD=dispatch_password
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 ```
 
-## API Endpoints
+### Service Ports
 
-### Create Emergency
-```bash
-POST /api/emergencies
-{
-  "emergencyId": "EMG-001",
-  "lat": 18.5074,
-  "lon": 73.8077,
-  "priority": "HIGH"
-}
-```
-
-### Get Ambulance Status
-```bash
-GET /api/ambulances/{ambulanceId}/status
-```
-
-### WebSocket (Real-time Tracking)
-```javascript
-ws://localhost:8085/ws/tracking
-```
+| Service | Port |
+|---------|------|
+| API Gateway | 8080 |
+| Emergency Service | 8081 |
+| Ambulance Service | 8082 |
+| Dispatch Service | 8083 |
+| Tracking Service | 8085 |
+| Auth Service | 8086 |
 
 ## Monitoring
 
-- Ambulance Service: http://localhost:8082/actuator/health
-- Dispatch Service: http://localhost:8083/actuator/health
-- Kafka UI: http://localhost:9021 (if using Confluent)
+### Metrics
+
+```bash
+# Dispatch metrics
+curl http://localhost:8083/actuator/metrics/dispatch.ambulances.available.count
+curl http://localhost:8083/actuator/metrics/dispatch.assignments.published.total
+
+# Emergency metrics
+curl http://localhost:8081/actuator/metrics/emergency.requests.total
+
+# Ambulance metrics
+curl http://localhost:8082/actuator/metrics/ambulance.fsm.transitions.total
+```
+
+### Health Checks
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+## Development
+
+### Testing & Debugging Tools
+
+See `dev-tools/` directory for:
+- Demo scripts
+- Testing utilities
+- Debugging tools
+- Development documentation
+
+```bash
+# Run complete demo
+./dev-tools/FINAL-WORKING-DEMO.ps1
+
+# See all available tools
+ls dev-tools/
+```
+
+### Database Schema
+
+```sql
+-- Emergencies table
+CREATE TABLE emergencies (
+    emergency_id VARCHAR(50) PRIMARY KEY,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    priority VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    assigned_ambulance_id VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Assignment history
+CREATE TABLE assignment_history (
+    id BIGSERIAL PRIMARY KEY,
+    emergency_id VARCHAR(50) NOT NULL,
+    ambulance_id VARCHAR(50) NOT NULL,
+    distance_km DOUBLE PRECISION,
+    assignment_version INTEGER,
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+## Architecture Patterns
+
+### Event-Driven Design
+- Kafka topics: `emergency-topic`, `ambulance-location-topic`, `ambulance-assigned-topic`
+- Transactional outbox pattern for reliable event publishing
+- Idempotency keys for duplicate message handling
+
+### State Management
+- Redis for distributed state (ambulance status, versions, locks)
+- Atomic state transitions using Lua scripts
+- Optimistic locking with version numbers
+
+### Dispatch Algorithm
+1. Emergency created → Queued by priority (HIGH/MEDIUM/LOW)
+2. Dispatch engine processes queue every 1 second
+3. Find nearest available ambulance using OSRM routing
+4. Acquire distributed lock (Redis)
+5. Publish assignment event to Kafka
+6. Ambulance FSM transitions: AVAILABLE → ASSIGNED → ON_ROUTE → ARRIVED → COMPLETED
+
+## Security
+
+### Authentication
+- JWT with RS256 (asymmetric encryption)
+- 2048-bit RSA keys
+- Token expiration: 24 hours
+
+### Authorization
+- Role-based access control (RBAC)
+- Roles: DISPATCHER, AMBULANCE_DRIVER, ADMIN
+- Service-level authorization with @PreAuthorize
+
+### Rate Limiting
+- Redis-based distributed rate limiting
+- Per-endpoint limits:
+  - Auth: 5 requests/minute
+  - Emergency: 10 requests/minute
+  - Location: 60 requests/minute
+  - Read: 100 requests/minute
+
+## Production Deployment
+
+### Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+### Kubernetes
+
+See `k8s/` directory for Kubernetes manifests (if available).
 
 ## Troubleshooting
 
-### No Ambulance Assigned
-**Cause**: Dispatch service doesn't have ambulance locations
+### No Ambulances Available
 
-**Fix**: Restart dispatch service (it will consume locations from Kafka)
+If all ambulances are stuck in ASSIGNED/ON_ROUTE:
 
-### Status Changes Too Fast (8 seconds)
-**Cause**: Service running with old code
-
-**Fix**: Restart ambulance service after any code changes
-
-### Route Path Not Showing
-**Cause**: OSRM returning invalid data or frontend not receiving route
-
-**Check**: Ambulance service logs for "Set destination... with X waypoints"
-
-## Project Structure
-
-```
-├── ambulance-service/      # Ambulance tracking & movement
-├── api-gateway/            # API Gateway (port 8080)
-├── dispatch-service/       # Intelligent dispatch logic
-├── emergency-service/      # Emergency management
-├── notification-service/   # Notifications
-├── tracking-service/       # WebSocket real-time tracking
-├── tracking-client/        # React frontend
-├── osrm-data/             # OSRM map data
-└── docker-compose*.yml    # Infrastructure setup
+```bash
+# Option 1: Wait for auto-heal (runs every 60 seconds)
+# Option 2: Use dev tools
+./dev-tools/force-reset-ambulances.ps1
 ```
 
-## Technologies
+### Kafka Connection Issues
 
-- **Backend**: Spring Boot, Kafka, Redis
-- **Frontend**: React, Leaflet, WebSocket
-- **Routing**: OSRM (OpenStreetMap Routing Machine)
-- **Infrastructure**: Docker, Docker Compose
+```bash
+# Check Kafka is running
+docker ps | grep kafka
 
-## Documentation
+# Check topics
+docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
+```
 
-Complete documentation is available in the [docs/](docs/) folder:
+### Redis Connection Issues
 
-- [Dispatch Algorithm](docs/DISPATCH_ALGORITHM.md) - **Production-grade dispatch logic (9/10 rating)**
-- [Production Upgrades](docs/PRODUCTION_UPGRADES.md) - **System improvements summary**
-- [System Architecture](docs/ARCHITECTURE.md) - High-level design
-- [Microservices Architecture](docs/MICROSERVICES_ARCHITECTURE.md) - Service details
-- [API Documentation](docs/API_DOCUMENTATION.md) - REST & WebSocket APIs
-- [Project Structure](docs/PROJECT_STRUCTURE.md) - Directory organization
-- [Monitoring Setup](docs/MONITORING_SETUP.md) - Metrics & health checks
-- [Contributing Guidelines](docs/CONTRIBUTING.md) - How to contribute
+```bash
+# Check Redis is running
+docker ps | grep redis
 
-## License
-
-MIT License - see LICENSE file
+# Test connection
+redis-cli ping
+```
 
 ## Contributing
 
-See CONTRIBUTING.md for guidelines.
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+[Your License Here]
+
+## Contact
+
+[Your Contact Information]
+
+---
+
+**Built with ❤️ using Spring Boot, Kafka, Redis, and PostgreSQL**

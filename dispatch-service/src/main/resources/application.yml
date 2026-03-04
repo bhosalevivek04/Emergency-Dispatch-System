@@ -63,3 +63,4 @@ logging:
   level:
     org.apache.kafka: INFO
     org.springframework.kafka: INFO
+    com.vivek.dispatch.service.DispatchEngine: DEBUG

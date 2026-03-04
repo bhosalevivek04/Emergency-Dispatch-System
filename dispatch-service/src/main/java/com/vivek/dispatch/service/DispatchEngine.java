@@ -289,6 +289,7 @@ public class DispatchEngine {
 	private boolean isAvailableInRedis(String ambulanceId) {
 		String rawStatus = redisTemplate.opsForValue().get(statusKey(ambulanceId));
 		if (rawStatus == null || rawStatus.isBlank()) {
+			log.debug("Ambulance status is null/blank, setting to AVAILABLE ambulanceId={}", ambulanceId);
 			redisTemplate.opsForValue().setIfAbsent(statusKey(ambulanceId), "AVAILABLE");
 			return true;
 		}
@@ -298,7 +299,7 @@ public class DispatchEngine {
 			status = "ASSIGNED";
 		}
 
-		return switch (status) {
+		boolean available = switch (status) {
 		case "AVAILABLE", "COMPLETED" -> true;
 		case "ASSIGNED", "ON_ROUTE", "ARRIVED" -> false;
 		default -> {
@@ -307,6 +308,10 @@ public class DispatchEngine {
 			yield true;
 		}
 		};
+		
+		log.debug("Checked ambulance availability ambulanceId={} rawStatus='{}' status='{}' available={}", 
+			ambulanceId, rawStatus, status, available);
+		return available;
 	}
 
 	private String lockKey(String ambulanceId) {
@@ -317,8 +322,14 @@ public class DispatchEngine {
 		AmbulanceLocationEvent nearest = null;
 		double minEta = Double.MAX_VALUE;
 
+		log.debug("Finding nearest ambulance for emergency emergencyId={} totalAmbulances={}", 
+			emergency.getEmergencyId(), ambulanceState.size());
+
 		for (AmbulanceLocationEvent ambulance : ambulanceState.values()) {
-			if (!isAvailableInRedis(ambulance.getAmbulanceId())) {
+			boolean available = isAvailableInRedis(ambulance.getAmbulanceId());
+			log.debug("Checking ambulance ambulanceId={} available={}", ambulance.getAmbulanceId(), available);
+			
+			if (!available) {
 				continue;
 			}
 
@@ -339,6 +350,14 @@ public class DispatchEngine {
 				minEta = eta;
 				nearest = ambulance;
 			}
+		}
+
+		if (nearest == null) {
+			log.warn("No nearest ambulance found emergencyId={} checkedAmbulances={}", 
+				emergency.getEmergencyId(), ambulanceState.size());
+		} else {
+			log.debug("Found nearest ambulance emergencyId={} ambulanceId={} eta={}s", 
+				emergency.getEmergencyId(), nearest.getAmbulanceId(), minEta);
 		}
 
 		return nearest;

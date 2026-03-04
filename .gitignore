@@ -113,7 +113,7 @@ logs/
 # Spring Boot
 spring-boot-devtools.properties
 
-# Test files
+# Test files (old - moved to dev-tools)
 test-websocket.html
 watch-ambulance.ps1
 test-emergency.json
@@ -121,6 +121,12 @@ test-phase2.ps1
 test-phase3.ps1
 diagnose-ambulance-service.ps1
 reference/
+simulate-emergencies.ps1
+trigger-dispatch-and-check.ps1
+
+# Dev tools are kept in repository for development
+# but can be excluded from production builds
+# dev-tools/
 
 # Error logs
 error.txt

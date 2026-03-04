@@ -73,7 +73,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                     .header("X-User-Roles", roles)
                     .build();
 
-            return chain.filter(exchange.mutate().request(modifiedRequest).build());
+            // Set username attribute for rate limiting
+            ServerWebExchange modifiedExchange = exchange.mutate()
+                    .request(modifiedRequest)
+                    .build();
+            modifiedExchange.getAttributes().put("username", username);
+
+            return chain.filter(modifiedExchange);
 
         } catch (Exception e) {
             log.error("Token validation error for path {}: {}", path, e.getMessage());
