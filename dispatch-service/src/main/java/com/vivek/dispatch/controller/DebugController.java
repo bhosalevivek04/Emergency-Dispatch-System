@@ -1,7 +1,9 @@
 package com.vivek.dispatch.controller;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,25 +26,40 @@ public class DebugController {
 	public Map<String, Object> getAmbulanceStatus() {
 		Map<String, Object> result = new HashMap<>();
 		
-		// Check Redis directly
-		String amb101Status = redisTemplate.opsForValue().get("ambulance:AMB-101:status");
-		String amb102Status = redisTemplate.opsForValue().get("ambulance:AMB-102:status");
-		String amb103Status = redisTemplate.opsForValue().get("ambulance:AMB-103:status");
+		// Discover all known ambulance IDs from Redis keys.
+		Set<String> ambulanceIds = discoverAmbulanceIds();
 		
 		Map<String, String> redisStatus = new HashMap<>();
-		redisStatus.put("AMB-101", amb101Status);
-		redisStatus.put("AMB-102", amb102Status);
-		redisStatus.put("AMB-103", amb103Status);
+		Map<String, Boolean> dispatchView = new HashMap<>();
+		for (String ambulanceId : ambulanceIds) {
+			redisStatus.put(ambulanceId, redisTemplate.opsForValue().get("ambulance:" + ambulanceId + ":status"));
+			dispatchView.put(ambulanceId, isAvailableViaReflection(ambulanceId));
+		}
+
+		if (redisStatus.isEmpty()) {
+			redisStatus.put("info", "No ambulance status keys found");
+		}
 		result.put("redisStatus", redisStatus);
 		
-		// Check what dispatch engine sees
-		Map<String, Boolean> dispatchView = new HashMap<>();
-		dispatchView.put("AMB-101", isAvailableViaReflection("AMB-101"));
-		dispatchView.put("AMB-102", isAvailableViaReflection("AMB-102"));
-		dispatchView.put("AMB-103", isAvailableViaReflection("AMB-103"));
 		result.put("dispatchView", dispatchView);
 		
 		return result;
+	}
+
+	private Set<String> discoverAmbulanceIds() {
+		Set<String> ids = new HashSet<>();
+		Set<String> statusKeys = redisTemplate.keys("ambulance:*:status");
+		if (statusKeys == null) {
+			return ids;
+		}
+		for (String key : statusKeys) {
+			// key format: ambulance:<ID>:status
+			String[] parts = key.split(":");
+			if (parts.length >= 3 && parts[1] != null && !parts[1].isBlank()) {
+				ids.add(parts[1]);
+			}
+		}
+		return ids;
 	}
 	
 	private boolean isAvailableViaReflection(String ambulanceId) {

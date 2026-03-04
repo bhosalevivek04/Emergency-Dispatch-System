@@ -3,7 +3,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #f5f7fa 100%);
   padding: 1rem;
 }
 
@@ -80,6 +80,15 @@
   font-size: 0.875rem;
 }
 
+.success-message {
+  padding: 0.75rem;
+  background-color: #c6f6d5;
+  border: 1px solid #68d391;
+  border-radius: 4px;
+  color: #276749;
+  font-size: 0.875rem;
+}
+
 .submit-button {
   padding: 0.75rem;
   background-color: #667eea;
@@ -106,4 +115,21 @@
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+}
+
+.auth-switch-text {
+  margin: 1rem 0 0 0;
+  text-align: center;
+  font-size: 0.875rem;
+  color: #4a5568;
+}
+
+.auth-switch-text a {
+  color: #4c51bf;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-switch-text a:hover {
+  text-decoration: underline;
 }

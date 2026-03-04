@@ -154,8 +154,25 @@ const AdminDashboard = () => {
         // Subscribe to ambulance location updates (only real topic that exists)
         unsubLocations = wsService.subscribe('/topic/location', (update) => {
           console.log('Received location update:', update);
-          setAmbulances(prev =>
-            prev.map(amb =>
+          setAmbulances(prev => {
+            const exists = prev.some(amb => amb.id === update.ambulanceId);
+            if (!exists) {
+              return [
+                ...prev,
+                {
+                  id: update.ambulanceId,
+                  status: update.status ?? 'AVAILABLE',
+                  version: 0,
+                  latitude: update.latitude,
+                  longitude: update.longitude,
+                  speed: update.speed ?? 0,
+                  heading: update.heading ?? 0,
+                  available: (update.status ?? 'AVAILABLE') === 'AVAILABLE',
+                },
+              ];
+            }
+
+            return prev.map(amb =>
               amb.id === update.ambulanceId
                 ? {
                   ...amb,
@@ -166,8 +183,8 @@ const AdminDashboard = () => {
                   status: update.status ?? amb.status
                 }
                 : amb
-            )
-          );
+            );
+          });
         });
 
         console.log('WebSocket subscriptions established');

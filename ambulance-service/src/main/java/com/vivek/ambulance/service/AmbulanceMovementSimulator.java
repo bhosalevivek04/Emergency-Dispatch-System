@@ -3,6 +3,7 @@ package com.vivek.ambulance.service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import jakarta.annotation.PostConstruct;
@@ -12,6 +13,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.vivek.ambulance.dto.AmbulanceLocationEvent;
+import com.vivek.ambulance.entity.Ambulance;
 import com.vivek.ambulance.model.AmbulanceStatus;
 
 import lombok.RequiredArgsConstructor;
@@ -30,6 +32,7 @@ public class AmbulanceMovementSimulator {
 	private final AmbulanceProducer producer;
 	private final AmbulanceStateTracker stateTracker;
 	private final OSRMService osrmService;
+	private final AmbulancePersistenceService ambulancePersistenceService;
 
 	// Store current location and destination for each ambulance
 	private final Map<String, Location> currentLocations = new ConcurrentHashMap<>();
@@ -83,6 +86,22 @@ public class AmbulanceMovementSimulator {
 			}
 			
 			log.info("Initializing movement simulator for fleet: {}", String.join(", ", ambulanceIds));
+
+			// Also warm dynamic ambulances persisted in DB so dispatch can see them
+			// immediately after service restart.
+			Set<String> configuredIds = java.util.Arrays.stream(ambulanceIds)
+					.map(String::trim)
+					.collect(java.util.stream.Collectors.toSet());
+
+			for (Ambulance ambulance : ambulancePersistenceService.findAll()) {
+				String ambId = ambulance.getAmbulanceId();
+				if (ambId == null || ambId.isBlank() || configuredIds.contains(ambId)) {
+					continue;
+				}
+				double lat = ambulance.getLatitude() != null ? ambulance.getLatitude().doubleValue() : INITIAL_POSITIONS[0][0];
+				double lon = ambulance.getLongitude() != null ? ambulance.getLongitude().doubleValue() : INITIAL_POSITIONS[0][1];
+				registerAmbulance(ambId, lat, lon);
+			}
 		} catch (Exception e) {
 			log.error("Failed to initialize movement simulator fleet", e);
 			throw new RuntimeException("Movement simulator fleet initialization failed", e);
@@ -110,6 +129,18 @@ public class AmbulanceMovementSimulator {
 			currentLocations.put(ambulanceId, new Location(lat, lon));
 			log.info("Initialized ambulance {} at ({}, {})", ambulanceId, lat, lon);
 		}
+	}
+
+	/**
+	 * Register a dynamically created ambulance so simulator keeps publishing
+	 * periodic location updates for it (not only static configured fleet IDs).
+	 */
+	public void registerAmbulance(String ambulanceId, double lat, double lon) {
+		if (ambulanceId == null || ambulanceId.isBlank()) {
+			return;
+		}
+		currentLocations.put(ambulanceId, new Location(lat, lon));
+		log.info("Registered dynamic ambulance {} for simulator at ({}, {})", ambulanceId, lat, lon);
 	}
 
 	private void updateAmbulance(String ambulanceId) {

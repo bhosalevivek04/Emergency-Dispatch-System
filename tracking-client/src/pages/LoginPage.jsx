@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PropTypes from 'prop-types';
@@ -115,6 +116,10 @@ const LoginPage = () => {
               )}
             </button>
           </form>
+
+          <p className="auth-switch-text">
+            Need an account? <Link to="/register">Register</Link>
+          </p>
         </div>
       </div>
     </div>

@@ -29,6 +29,9 @@ import lombok.extern.slf4j.Slf4j;
 public class AmbulanceAssignmentListener {
 	private static final int TRANSITION_RETRY_INTERVAL_SECONDS = 2;
 	private static final int MAX_TRANSITION_RETRIES = 120;
+	private static final int MOVEMENT_CHECK_INTERVAL_SECONDS = 20;
+	private static final double STAGNANT_DISTANCE_THRESHOLD_METERS = 15.0;
+	private static final int MAX_STAGNANT_CHECKS_BEFORE_REROUTE = 2;
 
 	private final ObjectMapper objectMapper;
 	private final AmbulanceProducer ambulanceProducer;
@@ -163,6 +166,93 @@ public class AmbulanceAssignmentListener {
 		scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ON_ROUTE, emergencyId), onRouteDelay, TimeUnit.SECONDS);
 		scheduler.schedule(() -> transitionArrivedWhenReached(ambulanceId, emergencyId, 0), arrivedDelay, TimeUnit.SECONDS);
 		scheduler.schedule(() -> completeTrip(assignment, emergencyId, 0), completedDelay, TimeUnit.SECONDS);
+		scheduler.schedule(
+				() -> monitorMovementAndRecalculateRoute(assignment, emergencyId, Double.NaN, Double.NaN, 0),
+				MOVEMENT_CHECK_INTERVAL_SECONDS,
+				TimeUnit.SECONDS);
+	}
+
+	private void monitorMovementAndRecalculateRoute(
+			AssignmentEvent assignment,
+			String emergencyId,
+			double previousLat,
+			double previousLon,
+			int stagnantChecks) {
+		String ambulanceId = assignment.getAmbulanceId();
+
+		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
+		if (!emergencyId.equals(activeEmergencyId)) {
+			// Assignment no longer active for this ambulance; stop monitoring.
+			return;
+		}
+
+		AmbulanceStatus status = ambulanceStateTracker.getStatus(ambulanceId);
+		if (status != AmbulanceStatus.ASSIGNED && status != AmbulanceStatus.ON_ROUTE) {
+			return;
+		}
+
+		if (movementSimulator.hasReachedDestination(ambulanceId)) {
+			return;
+		}
+
+		var current = movementSimulator.getCurrentLocation(ambulanceId);
+		if (current == null) {
+			scheduleNextMovementCheck(assignment, emergencyId, previousLat, previousLon, stagnantChecks);
+			return;
+		}
+
+		int nextStagnantChecks = stagnantChecks;
+		if (!Double.isNaN(previousLat) && !Double.isNaN(previousLon)) {
+			double movedMeters = haversineMeters(previousLat, previousLon, current.lat, current.lon);
+			if (movedMeters < STAGNANT_DISTANCE_THRESHOLD_METERS) {
+				nextStagnantChecks++;
+				log.warn("Ambulance appears stalled ambulanceId={} emergencyId={} movedMeters={} stagnantChecks={}",
+						ambulanceId, emergencyId, String.format("%.2f", movedMeters), nextStagnantChecks);
+			} else {
+				nextStagnantChecks = 0;
+			}
+		}
+
+		if (nextStagnantChecks >= MAX_STAGNANT_CHECKS_BEFORE_REROUTE) {
+			double newEta = movementSimulator.setDestination(
+					ambulanceId,
+					assignment.getEmergencyLat(),
+					assignment.getEmergencyLon());
+			meterRegistry.counter("ambulance.movement.reroute.total").increment();
+			log.warn("Recalculated route for stalled ambulance ambulanceId={} emergencyId={} newEtaSeconds={}",
+					ambulanceId, emergencyId, String.format("%.1f", newEta));
+
+			// If ambulance remained ASSIGNED, push it to ON_ROUTE after reroute.
+			if (status == AmbulanceStatus.ASSIGNED) {
+				safeTransition(ambulanceId, AmbulanceStatus.ON_ROUTE, emergencyId);
+			}
+			nextStagnantChecks = 0;
+		}
+
+		scheduleNextMovementCheck(assignment, emergencyId, current.lat, current.lon, nextStagnantChecks);
+	}
+
+	private void scheduleNextMovementCheck(
+			AssignmentEvent assignment,
+			String emergencyId,
+			double lat,
+			double lon,
+			int stagnantChecks) {
+		scheduler.schedule(
+				() -> monitorMovementAndRecalculateRoute(assignment, emergencyId, lat, lon, stagnantChecks),
+				MOVEMENT_CHECK_INTERVAL_SECONDS,
+				TimeUnit.SECONDS);
+	}
+
+	private double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
+		final double R = 6371000.0;
+		double dLat = Math.toRadians(lat2 - lat1);
+		double dLon = Math.toRadians(lon2 - lon1);
+		double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+				+ Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+				* Math.sin(dLon / 2) * Math.sin(dLon / 2);
+		double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+		return R * c;
 	}
 
 	/**

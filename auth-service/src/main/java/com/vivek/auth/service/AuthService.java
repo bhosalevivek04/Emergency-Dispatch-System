@@ -21,6 +21,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final MeterRegistry meterRegistry;
+    private final AmbulanceProvisioningService ambulanceProvisioningService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -46,12 +47,17 @@ public class AuthService {
                 .enabled(true)
                 .build();
 
+        // Keep user/ambulance mapping consistent at registration time.
+        if ("AMBULANCE_DRIVER".equals(request.getRole()) && request.getAmbulanceId() != null && !request.getAmbulanceId().isBlank()) {
+            ambulanceProvisioningService.ensureAmbulanceRegistered(request.getAmbulanceId(), request.getUsername());
+        }
+
         user = userRepository.save(user);
         log.info("User registered successfully: username={} role={}", user.getUsername(), user.getRoles());
         meterRegistry.counter("auth.register.success").increment();
 
         // Generate tokens
-        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles());
+        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles(), user.getAmbulanceId());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
@@ -61,6 +67,7 @@ public class AuthService {
                 .expiresIn(jwtService.getExpirationTime())
                 .username(user.getUsername())
                 .roles(user.getRoles())
+                .ambulanceId(user.getAmbulanceId())
                 .build();
     }
 
@@ -89,7 +96,7 @@ public class AuthService {
         meterRegistry.counter("auth.login.success").increment();
 
         // Generate tokens
-        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles());
+        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles(), user.getAmbulanceId());
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user);
 
         return AuthResponse.builder()
@@ -117,7 +124,7 @@ public class AuthService {
         User user = refreshToken.getUser();
 
         // Generate new access token
-        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles());
+        String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles(), user.getAmbulanceId());
 
         log.info("Token refreshed successfully: username={}", user.getUsername());
         meterRegistry.counter("auth.refresh.success").increment();

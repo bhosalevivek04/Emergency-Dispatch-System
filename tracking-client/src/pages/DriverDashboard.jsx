@@ -44,6 +44,29 @@ const calculateETA = (distance, speed = 40) => {
 
 const SIMULATION_TICK_SECONDS = 5;
 const ARRIVAL_SNAP_DISTANCE_KM = 0.03; // 30 meters
+const MANUAL_LOCATION_LOCK_MS = 15000;
+
+const DEFAULT_LAT = 18.5204;
+const DEFAULT_LON = 73.8567;
+
+const toValidLatitude = (value, fallback = DEFAULT_LAT) => (
+  Number.isFinite(Number(value)) ? Number(value) : fallback
+);
+
+const toValidLongitude = (value, fallback = DEFAULT_LON) => (
+  Number.isFinite(Number(value)) ? Number(value) : fallback
+);
+
+const normalizeEmergency = (emergency) => {
+  if (!emergency) return null;
+  return {
+    ...emergency,
+    id: emergency.id || emergency.emergencyId,
+    latitude: toValidLatitude(emergency.latitude ?? emergency.lat),
+    longitude: toValidLongitude(emergency.longitude ?? emergency.lon),
+    assignedAmbulanceId: emergency.assignedAmbulanceId || emergency.ambulanceId,
+  };
+};
 
 /**
  * DriverDashboard component
@@ -56,24 +79,29 @@ const DriverDashboard = () => {
   // State
   const [ambulanceId, setAmbulanceId] = useState(null);
   const [currentMission, setCurrentMission] = useState(null);
-  const [currentLocation, setCurrentLocation] = useState({ latitude: 18.5204, longitude: 73.8567 });
+  const [currentLocation, setCurrentLocation] = useState({ latitude: DEFAULT_LAT, longitude: DEFAULT_LON });
   const [ambulanceData, setAmbulanceData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [locationTracking, setLocationTracking] = useState(false);
-  const [useSimulation, setUseSimulation] = useState(true);
+  const [useSimulation, setUseSimulation] = useState(false);
+  const [gpsPermission, setGpsPermission] = useState('unknown');
+  const [mapPickMode, setMapPickMode] = useState(false);
+  const [isTrackingPaused, setIsTrackingPaused] = useState(false);
+  const [manualLocationLockUntil, setManualLocationLockUntil] = useState(0);
+  const [manualLocationMode, setManualLocationMode] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('disconnected');
 
   // Refs
   const locationIntervalRef = useRef(null);
   const wsUnsubscribeRef = useRef(null);
 
-  // Ambulance ID is supplied by the auth response; fall back to a safe default
+  // Ambulance ID is supplied by the auth response.
   useEffect(() => {
     if (user?.ambulanceId) {
       setAmbulanceId(user.ambulanceId);
     } else {
-      setAmbulanceId('AMB-001');
+      setAmbulanceId(null);
     }
   }, [user]);
 
@@ -85,18 +113,25 @@ const DriverDashboard = () => {
       const ambulance = await ambulanceApi.getById(ambulanceId);
       setAmbulanceData(ambulance);
 
-      // Update current location from ambulance data
-      setCurrentLocation({
-        latitude: ambulance.latitude,
-        longitude: ambulance.longitude,
-      });
+      // /api/ambulances/{id} may not include coordinates; retain valid previous position.
+      setCurrentLocation((prev) => ({
+        latitude: toValidLatitude(ambulance.latitude, prev.latitude),
+        longitude: toValidLongitude(ambulance.longitude, prev.longitude),
+      }));
 
-      // Fetch mission if ambulance is assigned
+      // Resolve mission:
+      // 1) direct linked emergency ID from ambulance response (if available)
+      // 2) fallback scan of ASSIGNED emergencies by ambulance ID
       if (ambulance.assignedEmergencyId) {
         const emergency = await emergencyApi.getById(ambulance.assignedEmergencyId);
-        setCurrentMission(emergency);
+        setCurrentMission(normalizeEmergency(emergency));
       } else {
-        setCurrentMission(null);
+        const assigned = await emergencyApi.getByStatus('ASSIGNED');
+        const matched = assigned.find((e) => {
+          const emergency = normalizeEmergency(e);
+          return emergency?.assignedAmbulanceId === ambulanceId;
+        });
+        setCurrentMission(matched ? normalizeEmergency(matched) : null);
       }
     } catch (error) {
       console.error('Error fetching ambulance data:', error);
@@ -113,6 +148,37 @@ const DriverDashboard = () => {
     }
   }, [ambulanceId, fetchAmbulanceData]);
 
+  useEffect(() => {
+    if (!ambulanceId) return;
+
+    if (!('geolocation' in navigator)) {
+      setGpsPermission('unsupported');
+      return;
+    }
+
+    if (!('permissions' in navigator) || !navigator.permissions?.query) {
+      setGpsPermission('unknown');
+      return;
+    }
+
+    let permissionStatusRef;
+
+    navigator.permissions
+      .query({ name: 'geolocation' })
+      .then((permissionStatus) => {
+        permissionStatusRef = permissionStatus;
+        setGpsPermission(permissionStatus.state);
+        permissionStatus.onchange = () => setGpsPermission(permissionStatus.state);
+      })
+      .catch(() => setGpsPermission('unknown'));
+
+    return () => {
+      if (permissionStatusRef) {
+        permissionStatusRef.onchange = null;
+      }
+    };
+  }, [ambulanceId]);
+
   // WebSocket connection for real-time updates
   useEffect(() => {
     if (!ambulanceId || !accessToken) return;
@@ -128,7 +194,7 @@ const DriverDashboard = () => {
           `/topic/driver/${ambulanceId}/mission`,
           (data) => {
             console.log('Received mission update:', data);
-            setCurrentMission(data);
+            setCurrentMission(normalizeEmergency(data));
           }
         );
 
@@ -151,15 +217,16 @@ const DriverDashboard = () => {
 
   // Location tracking
   useEffect(() => {
-    if (!ambulanceId || !locationTracking) return;
+    const isManualLockActive = Date.now() < manualLocationLockUntil;
+    if (!ambulanceId || !locationTracking || mapPickMode || isTrackingPaused || isManualLockActive) return;
 
-    const sendLocationUpdate = async (lat, lng) => {
+    const sendLocationUpdate = async (lat, lng, speedKmh = 0) => {
       try {
         await trackingApi.updateLocation({
           ambulanceId,
           latitude: lat,
           longitude: lng,
-          speed: ambulanceData?.speed ?? 40,
+          speed: speedKmh,
           heading: ambulanceData?.heading ?? 0,
           timestamp: Date.now(),
         });
@@ -168,44 +235,51 @@ const DriverDashboard = () => {
       }
     };
 
-    if (useSimulation) {
+    if (manualLocationMode) {
+      locationIntervalRef.current = setInterval(() => {
+        sendLocationUpdate(currentLocation.latitude, currentLocation.longitude, 0);
+      }, 5000);
+    } else if (useSimulation) {
       // Simulated movement towards emergency
       locationIntervalRef.current = setInterval(() => {
-        if (currentMission) {
-          setCurrentLocation(prev => {
-            const targetLat = currentMission.latitude;
-            const targetLng = currentMission.longitude;
-            const distanceToTargetKm = calculateDistance(
-              prev.latitude,
-              prev.longitude,
-              targetLat,
-              targetLng
-            );
+        setCurrentLocation(prev => {
+          if (!currentMission) {
+            sendLocationUpdate(prev.latitude, prev.longitude, 0);
+            return prev;
+          }
 
-            // Snap to exact emergency point when close enough.
-            if (distanceToTargetKm <= ARRIVAL_SNAP_DISTANCE_KM) {
-              sendLocationUpdate(targetLat, targetLng);
-              return {
-                latitude: targetLat,
-                longitude: targetLng,
-              };
-            }
+          const targetLat = toValidLatitude(currentMission.latitude ?? currentMission.lat, prev.latitude);
+          const targetLng = toValidLongitude(currentMission.longitude ?? currentMission.lon, prev.longitude);
+          const distanceToTargetKm = calculateDistance(
+            prev.latitude,
+            prev.longitude,
+            targetLat,
+            targetLng
+          );
 
-            // Move by speed-based step to avoid asymptotic behavior.
-            const speedKmh = ambulanceData?.speed > 0 ? ambulanceData.speed : 40;
-            const stepKm = speedKmh * (SIMULATION_TICK_SECONDS / 3600);
-            const fraction = Math.min(1, stepKm / distanceToTargetKm);
-            const newLat = prev.latitude + (targetLat - prev.latitude) * fraction;
-            const newLng = prev.longitude + (targetLng - prev.longitude) * fraction;
-
-            sendLocationUpdate(newLat, newLng);
-
+          // Snap to exact emergency point when close enough.
+          if (distanceToTargetKm <= ARRIVAL_SNAP_DISTANCE_KM) {
+            sendLocationUpdate(targetLat, targetLng, 0);
             return {
-              latitude: newLat,
-              longitude: newLng,
+              latitude: targetLat,
+              longitude: targetLng,
             };
-          });
-        }
+          }
+
+          // Move by speed-based step to avoid asymptotic behavior.
+          const speedKmh = 40;
+          const stepKm = speedKmh * (SIMULATION_TICK_SECONDS / 3600);
+          const fraction = Math.min(1, stepKm / distanceToTargetKm);
+          const newLat = prev.latitude + (targetLat - prev.latitude) * fraction;
+          const newLng = prev.longitude + (targetLng - prev.longitude) * fraction;
+
+          sendLocationUpdate(newLat, newLng, speedKmh);
+
+          return {
+            latitude: newLat,
+            longitude: newLng,
+          };
+        });
       }, 5000); // Update every 5 seconds
     } else {
       // Real GPS tracking
@@ -213,12 +287,21 @@ const DriverDashboard = () => {
         const watchId = navigator.geolocation.watchPosition(
           (position) => {
             const { latitude, longitude } = position.coords;
+            setGpsPermission('granted');
             setCurrentLocation({ latitude, longitude });
-            sendLocationUpdate(latitude, longitude);
+            const gpsSpeed = position.coords.speed != null && Number.isFinite(position.coords.speed)
+              ? Math.max(0, position.coords.speed * 3.6)
+              : 0;
+            sendLocationUpdate(latitude, longitude, gpsSpeed);
           },
           (error) => {
             console.error('Geolocation error:', error);
-            showToast('Failed to get location', 'error');
+            if (error.code === error.PERMISSION_DENIED) {
+              setGpsPermission('denied');
+              showToast('Location permission denied. Enable GPS permission in browser settings.', 'error');
+            } else {
+              showToast('Failed to get location', 'error');
+            }
           },
           {
             enableHighAccuracy: true,
@@ -240,16 +323,111 @@ const DriverDashboard = () => {
         }
       }
     };
-  }, [ambulanceId, locationTracking, currentMission, useSimulation, showToast, ambulanceData]);
+  }, [ambulanceId, locationTracking, currentMission, useSimulation, showToast, ambulanceData, mapPickMode, isTrackingPaused, manualLocationLockUntil, manualLocationMode, currentLocation.latitude, currentLocation.longitude]);
 
   // Auto-start location tracking when mission is active
   useEffect(() => {
-    if (currentMission && ambulanceData?.status !== 'AVAILABLE') {
+    if (ambulanceId) {
       setLocationTracking(true);
-    } else {
-      setLocationTracking(false);
     }
-  }, [currentMission, ambulanceData]);
+  }, [ambulanceId]);
+
+  // Manual fixed-position mode is only for pre-assignment staging.
+  // Once a mission is assigned, force live/sim movement mode.
+  useEffect(() => {
+    if (!currentMission) {
+      return;
+    }
+    if (manualLocationMode || mapPickMode || isTrackingPaused) {
+      setManualLocationMode(false);
+      setMapPickMode(false);
+      setIsTrackingPaused(false);
+      showToast('Mission assigned: switched from manual fixed location to live tracking', 'warning');
+    }
+  }, [currentMission, manualLocationMode, mapPickMode, isTrackingPaused, showToast]);
+
+  const requestGpsPermission = () => {
+    if (!('geolocation' in navigator)) {
+      setGpsPermission('unsupported');
+      showToast('Geolocation is not supported by this browser', 'error');
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setManualLocationMode(false);
+        setUseSimulation(false);
+        setGpsPermission('granted');
+        setCurrentLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        showToast('GPS permission granted', 'success');
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setGpsPermission('denied');
+          showToast('GPS permission denied. Please allow location access.', 'error');
+        } else {
+          showToast('Unable to get current location', 'error');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleManualMapLocation = useCallback(async (lat, lon) => {
+    if (!ambulanceId) return;
+
+    const latitude = toValidLatitude(lat, currentLocation.latitude);
+    const longitude = toValidLongitude(lon, currentLocation.longitude);
+
+    setCurrentLocation({ latitude, longitude });
+
+    try {
+      await trackingApi.updateLocation({
+        ambulanceId,
+        latitude,
+        longitude,
+        speed: 0,
+        heading: ambulanceData?.heading ?? 0,
+        timestamp: Date.now(),
+      });
+      setMapPickMode(false);
+      setIsTrackingPaused(false);
+      setManualLocationLockUntil(Date.now() + MANUAL_LOCATION_LOCK_MS);
+      setManualLocationMode(true);
+      showToast('Start location updated from map (locked for 15s)', 'success');
+    } catch (error) {
+      console.error('Failed to update manual map location:', error);
+      showToast('Failed to update location from map', 'error');
+    }
+  }, [ambulanceId, ambulanceData?.heading, currentLocation.latitude, currentLocation.longitude, showToast]);
+
+  const toggleMapPickMode = () => {
+    setMapPickMode((prev) => {
+      const next = !prev;
+      setIsTrackingPaused(next);
+      return next;
+    });
+  };
+
+  const resumeLiveTracking = () => {
+    setManualLocationMode(false);
+    showToast('Live location tracking resumed', 'success');
+  };
+
+  useEffect(() => {
+    if (!manualLocationLockUntil) return;
+    const remaining = manualLocationLockUntil - Date.now();
+    if (remaining <= 0) {
+      setManualLocationLockUntil(0);
+      return;
+    }
+
+    const timer = setTimeout(() => setManualLocationLockUntil(0), remaining);
+    return () => clearTimeout(timer);
+  }, [manualLocationLockUntil]);
 
   // Handle status update
   const handleStatusUpdate = async (newStatus) => {
@@ -261,15 +439,15 @@ const DriverDashboard = () => {
         // Ensure backend and all dashboards see exact arrival coordinates.
         await trackingApi.updateLocation({
           ambulanceId,
-          latitude: currentMission.latitude,
-          longitude: currentMission.longitude,
+          latitude: toValidLatitude(currentMission.latitude ?? currentMission.lat, currentLocation.latitude),
+          longitude: toValidLongitude(currentMission.longitude ?? currentMission.lon, currentLocation.longitude),
           speed: 0,
           heading: ambulanceData?.heading ?? 0,
           timestamp: Date.now(),
         });
         setCurrentLocation({
-          latitude: currentMission.latitude,
-          longitude: currentMission.longitude,
+          latitude: toValidLatitude(currentMission.latitude ?? currentMission.lat, currentLocation.latitude),
+          longitude: toValidLongitude(currentMission.longitude ?? currentMission.lon, currentLocation.longitude),
         });
       }
 
@@ -291,8 +469,8 @@ const DriverDashboard = () => {
     ? calculateDistance(
       currentLocation.latitude,
       currentLocation.longitude,
-      currentMission.latitude,
-      currentMission.longitude
+      toValidLatitude(currentMission.latitude ?? currentMission.lat),
+      toValidLongitude(currentMission.longitude ?? currentMission.lon)
     )
     : 0;
 
@@ -302,6 +480,32 @@ const DriverDashboard = () => {
     return (
       <div className="driver-dashboard">
         <LoadingSpinner size="large" overlay />
+      </div>
+    );
+  }
+
+  if (!ambulanceId) {
+    return (
+      <div className="driver-dashboard">
+        <header className="driver-header">
+          <div className="driver-header-content">
+            <h1>🚑 Driver Dashboard</h1>
+            <div className="driver-header-actions">
+              <span className="driver-username">{user?.username}</span>
+              <button onClick={logout} className="logout-btn">
+                Logout
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="driver-main">
+          <div className="no-mission">
+            <div className="no-mission-icon">⚠️</div>
+            <h2>No Ambulance Linked</h2>
+            <p>Your driver account is not linked to an ambulance yet.</p>
+            <p>Please contact admin to assign an ambulance ID.</p>
+          </div>
+        </main>
       </div>
     );
   }
@@ -360,6 +564,7 @@ const DriverDashboard = () => {
               <MapComponent
                 center={[currentLocation.latitude, currentLocation.longitude]}
                 zoom={14}
+                onMapClick={mapPickMode ? handleManualMapLocation : undefined}
                 style={{ height: '100%', width: '100%' }}
               >
                 <EmergencyMarker emergency={currentMission} />
@@ -375,8 +580,8 @@ const DriverDashboard = () => {
                 <RoutePolyline
                   ambulancePosition={currentLocation}
                   emergencyPosition={{
-                    latitude: currentMission.latitude,
-                    longitude: currentMission.longitude,
+                    latitude: toValidLatitude(currentMission.latitude ?? currentMission.lat),
+                    longitude: toValidLongitude(currentMission.longitude ?? currentMission.lon),
                   }}
                 />
               </MapComponent>
@@ -422,17 +627,66 @@ const DriverDashboard = () => {
 
             {/* Location Tracking Controls */}
             <section className="tracking-controls">
+              <div className="simulation-toggle">
+                <button
+                  type="button"
+                  onClick={toggleMapPickMode}
+                  className="status-btn status-btn-arrived"
+                >
+                  {mapPickMode ? 'Cancel Location Pick' : 'Pick Location On Map'}
+                </button>
+              </div>
+              {mapPickMode && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Tap on map to set start location</span>
+                </div>
+              )}
+              {isTrackingPaused && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Live tracking paused while selecting location</span>
+                </div>
+              )}
+              {Date.now() < manualLocationLockUntil && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Manual location lock active (15s)</span>
+                </div>
+              )}
               <div className="tracking-status">
                 <span className={`tracking-indicator ${locationTracking ? 'active' : ''}`}>
                   {locationTracking ? '📡 Tracking Active' : '📡 Tracking Inactive'}
                 </span>
+              </div>
+              <div className="tracking-status">
+                <span className={`tracking-indicator ${gpsPermission === 'granted' ? 'active' : ''}`}>
+                  GPS Permission: {gpsPermission}
+                </span>
+              </div>
+              {manualLocationMode && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator active">Manual location mode active (fixed position)</span>
+                </div>
+              )}
+              {manualLocationMode && (
+                <div className="simulation-toggle">
+                  <button type="button" onClick={resumeLiveTracking} className="status-btn status-btn-on-route">
+                    Resume Live Tracking
+                  </button>
+                </div>
+              )}
+              <div className="simulation-toggle">
+                <button type="button" onClick={requestGpsPermission} className="status-btn status-btn-on-route">
+                  Enable GPS Location
+                </button>
               </div>
               <div className="simulation-toggle">
                 <label>
                   <input
                     type="checkbox"
                     checked={useSimulation}
-                    onChange={(e) => setUseSimulation(e.target.checked)}
+                    onChange={(e) => {
+                      setManualLocationMode(false);
+                      setUseSimulation(e.target.checked);
+                    }}
                   />
                   Use Simulated Movement
                 </label>
@@ -440,17 +694,105 @@ const DriverDashboard = () => {
             </section>
           </>
         ) : (
-          <div className="no-mission">
-            <div className="no-mission-icon">🚑</div>
-            <h2>No Active Mission</h2>
-            <p>Waiting for emergency assignment...</p>
-            <div className="ambulance-status">
-              <span>Status: </span>
-              <span className="status-badge status-available">
-                {ambulanceData?.status || 'AVAILABLE'}
-              </span>
+          <>
+            <div className="no-mission">
+              <div className="no-mission-icon">🚑</div>
+              <h2>No Active Mission</h2>
+              <p>Waiting for emergency assignment...</p>
+              <div className="ambulance-status">
+                <span>Status: </span>
+                <span className="status-badge status-available">
+                  {ambulanceData?.status || 'AVAILABLE'}
+                </span>
+              </div>
             </div>
-          </div>
+
+            <section className="mission-map">
+              <MapComponent
+                center={[currentLocation.latitude, currentLocation.longitude]}
+                zoom={14}
+                onMapClick={mapPickMode ? handleManualMapLocation : undefined}
+                style={{ height: '100%', width: '100%' }}
+              >
+                {ambulanceData && (
+                  <AmbulanceMarker
+                    ambulance={{
+                      ...ambulanceData,
+                      latitude: currentLocation.latitude,
+                      longitude: currentLocation.longitude,
+                    }}
+                  />
+                )}
+              </MapComponent>
+            </section>
+
+            <section className="tracking-controls">
+              <div className="simulation-toggle">
+                <button
+                  type="button"
+                  onClick={toggleMapPickMode}
+                  className="status-btn status-btn-arrived"
+                >
+                  {mapPickMode ? 'Cancel Location Pick' : 'Pick Location On Map'}
+                </button>
+              </div>
+              {mapPickMode && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Tap on map to set start location</span>
+                </div>
+              )}
+              {isTrackingPaused && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Live tracking paused while selecting location</span>
+                </div>
+              )}
+              {Date.now() < manualLocationLockUntil && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator">Manual location lock active (15s)</span>
+                </div>
+              )}
+              <div className="tracking-status">
+                <span className={`tracking-indicator ${locationTracking ? 'active' : ''}`}>
+                  {locationTracking ? '📡 Tracking Active' : '📡 Tracking Inactive'}
+                </span>
+              </div>
+              <div className="tracking-status">
+                <span className={`tracking-indicator ${gpsPermission === 'granted' ? 'active' : ''}`}>
+                  GPS Permission: {gpsPermission}
+                </span>
+              </div>
+              {manualLocationMode && (
+                <div className="tracking-status">
+                  <span className="tracking-indicator active">Manual location mode active (fixed position)</span>
+                </div>
+              )}
+              {manualLocationMode && (
+                <div className="simulation-toggle">
+                  <button type="button" onClick={resumeLiveTracking} className="status-btn status-btn-on-route">
+                    Resume Live Tracking
+                  </button>
+                </div>
+              )}
+              <div className="simulation-toggle">
+                <button type="button" onClick={requestGpsPermission} className="status-btn status-btn-on-route">
+                  Enable GPS Location
+                </button>
+              </div>
+              <div className="simulation-toggle">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={useSimulation}
+                    onChange={(e) => {
+                      setManualLocationMode(false);
+                      setUseSimulation(e.target.checked);
+                    }}
+                  />
+                  Use Simulated Movement
+                </label>
+              </div>
+            </section>
+          </>
         )}
       </main>
     </div>
@@ -458,3 +800,4 @@ const DriverDashboard = () => {
 };
 
 export default DriverDashboard;
+

@@ -3,6 +3,8 @@ package com.vivek.tracking.controller;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -61,12 +63,31 @@ public class TrackingController {
 	 */
 	@PostMapping("/location")
 	@PreAuthorize("hasAnyRole('ADMIN', 'AMBULANCE_DRIVER')")
-	public ResponseEntity<Map<String, Object>> updateLocation(@RequestBody AmbulanceLocationEvent location) {
+	public ResponseEntity<Map<String, Object>> updateLocation(
+			@RequestBody AmbulanceLocationEvent location,
+			HttpServletRequest request) {
 		
 		// Validate input
 		if (location.getAmbulanceId() == null || location.getAmbulanceId().isEmpty()) {
 			return ResponseEntity.badRequest()
 					.body(Map.of("error", "Ambulance ID is required"));
+		}
+
+		String rolesHeader = request.getHeader("X-User-Roles");
+		String callerAmbulanceId = request.getHeader("X-User-Ambulance-Id");
+		boolean isAdmin = hasRole(rolesHeader, "ADMIN");
+		boolean isDriver = hasRole(rolesHeader, "AMBULANCE_DRIVER");
+
+		// Drivers can publish location only for their own mapped ambulance.
+		if (!isAdmin && isDriver) {
+			if (callerAmbulanceId == null || callerAmbulanceId.isBlank()) {
+				return ResponseEntity.status(HttpStatus.FORBIDDEN)
+						.body(Map.of("error", "Driver account is not linked to an ambulance"));
+			}
+			if (!callerAmbulanceId.equals(location.getAmbulanceId())) {
+				return ResponseEntity.status(HttpStatus.FORBIDDEN)
+						.body(Map.of("error", "Drivers can only update their own ambulance location"));
+			}
 		}
 
 		// Validate coordinate ranges (primitives can't be null, just check ranges)
@@ -132,5 +153,18 @@ public class TrackingController {
 				"service", "tracking-service",
 				"activeAmbulances", trackingCacheService.getAllLatest().size()
 		));
+	}
+
+	private boolean hasRole(String rolesHeader, String role) {
+		if (rolesHeader == null || rolesHeader.isBlank()) {
+			return false;
+		}
+		String[] roles = rolesHeader.split(",");
+		for (String r : roles) {
+			if (role.equals(r.trim())) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

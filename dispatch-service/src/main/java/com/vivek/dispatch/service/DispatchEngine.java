@@ -50,6 +50,7 @@ public class DispatchEngine {
 	private static final String QUEUE_HIGH = "dispatch:queue:HIGH";
 	private static final String QUEUE_MEDIUM = "dispatch:queue:MEDIUM";
 	private static final String QUEUE_LOW = "dispatch:queue:LOW";
+	private static final long MAX_LOCATION_AGE_MS = 60_000L;
 	private Counter emergencyQueuedCounter;
 	private Counter assignmentPublishedCounter;
 	private Counter noAvailableAmbulanceCounter;
@@ -332,6 +333,11 @@ public class DispatchEngine {
 			if (!available) {
 				continue;
 			}
+			if (!isLocationFresh(ambulance)) {
+				log.debug("Skipping stale ambulance location ambulanceId={} timestamp={}",
+						ambulance.getAmbulanceId(), ambulance.getTimestamp());
+				continue;
+			}
 
 			OSRMRoute route = osrmService.getRoute(ambulance.getLatitude(), ambulance.getLongitude(), 
 				emergency.getLat(), emergency.getLon());
@@ -361,6 +367,14 @@ public class DispatchEngine {
 		}
 
 		return nearest;
+	}
+
+	private boolean isLocationFresh(AmbulanceLocationEvent ambulance) {
+		long timestamp = ambulance.getTimestamp();
+		if (timestamp <= 0) {
+			return false;
+		}
+		return System.currentTimeMillis() - timestamp <= MAX_LOCATION_AGE_MS;
 	}
 
 	private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {

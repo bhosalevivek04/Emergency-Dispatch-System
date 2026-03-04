@@ -46,6 +46,10 @@ management:
       prometheus:
         enabled: true
 
+ambulance:
+  service:
+    url: ${AMBULANCE_SERVICE_URL:http://localhost:8082}
+
 # Logging
 logging:
   level:

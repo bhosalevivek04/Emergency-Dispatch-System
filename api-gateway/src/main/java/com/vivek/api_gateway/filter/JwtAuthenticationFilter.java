@@ -67,14 +67,21 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             Claims claims = jwtService.validateToken(token);
             String username = claims.getSubject();
             String roles = claims.get("roles", String.class);
+            String ambulanceId = claims.get("ambulanceId", String.class);
 
-            log.debug("Authenticated request: username={}, roles={}, path={}", username, roles, path);
+            log.debug("Authenticated request: username={}, roles={}, ambulanceId={}, path={}",
+                    username, roles, ambulanceId, path);
 
             // Add user context to request headers for downstream services
-            ServerHttpRequest modifiedRequest = request.mutate()
+            ServerHttpRequest.Builder requestBuilder = request.mutate()
                     .header("X-User-Username", username)
-                    .header("X-User-Roles", roles)
-                    .build();
+                    .header("X-User-Roles", roles);
+
+            if (ambulanceId != null && !ambulanceId.isBlank()) {
+                requestBuilder.header("X-User-Ambulance-Id", ambulanceId);
+            }
+
+            ServerHttpRequest modifiedRequest = requestBuilder.build();
 
             // Set username attribute for rate limiting
             ServerWebExchange modifiedExchange = exchange.mutate()

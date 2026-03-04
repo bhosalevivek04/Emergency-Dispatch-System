@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import AdminDashboard from './pages/AdminDashboard';
 import DispatcherDashboard from './pages/DispatcherDashboard';
 import DriverDashboard from './pages/DriverDashboard';
@@ -30,6 +31,7 @@ function App() {
     <Routes>
       {/* Login route */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
 
       {/* Admin dashboard - requires ADMIN role */}
       <Route
