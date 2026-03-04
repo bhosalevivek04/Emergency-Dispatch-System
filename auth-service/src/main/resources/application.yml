@@ -6,9 +6,9 @@ spring:
     name: auth-service
   
   datasource:
-    url: jdbc:postgresql://localhost:5432/emergency_dispatch
-    username: dispatch_user
-    password: dispatch_password
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/emergency_dispatch}
+    username: ${SPRING_DATASOURCE_USERNAME:dispatch_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:change_me}
     driver-class-name: org.postgresql.Driver
   
   jpa:

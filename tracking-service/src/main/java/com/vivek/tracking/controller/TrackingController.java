@@ -40,11 +40,13 @@ public class TrackingController {
 	private static final long MIN_UPDATE_INTERVAL_MS = 2000; // 2 seconds minimum between updates
 
 	@GetMapping("/ambulances")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER', 'AMBULANCE_DRIVER')")
 	public ResponseEntity<Map<String, AmbulanceLocationEvent>> getAllLatest() {
 		return ResponseEntity.ok(trackingCacheService.getAllLatest());
 	}
 
 	@GetMapping("/ambulances/{ambulanceId}")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER', 'AMBULANCE_DRIVER')")
 	public ResponseEntity<AmbulanceLocationEvent> getLatest(@PathVariable String ambulanceId) {
 		AmbulanceLocationEvent location = trackingCacheService.getLatest(ambulanceId);
 		if (location == null) {

@@ -1,5 +1,6 @@
 package com.vivek.ambulance.controller;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +20,9 @@ import lombok.extern.slf4j.Slf4j;
 public class DiagnosticController {
 
     private final AmbulanceStateTracker stateTracker;
+    
+    @Value("${ambulance.fleet.ids:AMB-101,AMB-102,AMB-103}")
+    private String fleetIdsConfig;
 
     @PostMapping("/init-fleet")
     @PreAuthorize("hasRole('ADMIN')")
@@ -41,8 +45,9 @@ public class DiagnosticController {
             StringBuilder status = new StringBuilder();
             status.append("Ambulance Fleet Status:\n");
             
-            String[] ambulances = {"AMB-101", "AMB-102", "AMB-103"};
+            String[] ambulances = fleetIdsConfig.split(",");
             for (String ambulanceId : ambulances) {
+                ambulanceId = ambulanceId.trim();
                 try {
                     var ambulanceStatus = stateTracker.getStatus(ambulanceId);
                     var version = stateTracker.getVersion(ambulanceId);

@@ -30,13 +30,25 @@ public class JwtService {
 
     @PostConstruct
     public void init() {
-        try {
-            fetchPublicKey();
-            log.info("Public key fetched successfully from auth-service");
-        } catch (Exception e) {
-            log.error("Failed to fetch public key from auth-service", e);
-            throw new RuntimeException("Failed to initialize JWT service", e);
+        int maxAttempts = 10;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                fetchPublicKey();
+                log.info("Public key fetched successfully from auth-service on attempt {}", attempt);
+                return;
+            } catch (Exception e) {
+                log.warn("Attempt {}/{} failed to fetch public key: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(3000); // Wait 3 seconds before retry
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted while waiting to retry public key fetch", ie);
+                    }
+                }
+            }
         }
+        throw new RuntimeException("Failed to fetch public key after " + maxAttempts + " attempts");
     }
 
     private void fetchPublicKey() throws Exception {

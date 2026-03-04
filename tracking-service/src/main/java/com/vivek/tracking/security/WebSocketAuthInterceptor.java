@@ -30,12 +30,11 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
             HttpServletRequest httpRequest = servletRequest.getServletRequest();
             String rolesHeader = httpRequest.getHeader(ROLES_HEADER);
 
-            // If no roles header, allow connection (will be protected by API Gateway in production)
-            // This allows direct browser connections for development/testing
+            // If no roles header, reject connection in production
+            // In development, the API Gateway should set this header
             if (rolesHeader == null || rolesHeader.isBlank()) {
-                log.info("WebSocket connection without roles header - allowing for development");
-                attributes.put("roles", List.of("ANONYMOUS"));
-                return true;
+                log.warn("WebSocket connection rejected: Missing X-User-Roles header");
+                return false;
             }
 
             List<String> roles = Arrays.stream(rolesHeader.split(","))
