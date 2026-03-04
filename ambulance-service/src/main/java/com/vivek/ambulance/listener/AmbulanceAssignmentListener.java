@@ -22,13 +22,14 @@ import com.vivek.ambulance.service.AmbulanceProducer;
 import com.vivek.ambulance.service.AmbulanceStateTracker;
 import com.vivek.ambulance.service.AmbulanceMovementSimulator;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Component
 @Slf4j
-@RequiredArgsConstructor
 public class AmbulanceAssignmentListener {
+	private static final int TRANSITION_RETRY_INTERVAL_SECONDS = 2;
+	private static final int MAX_TRANSITION_RETRIES = 120;
+
 	private final ObjectMapper objectMapper;
 	private final AmbulanceProducer ambulanceProducer;
 	private final AmbulanceStateTracker ambulanceStateTracker;
@@ -36,6 +37,21 @@ public class AmbulanceAssignmentListener {
 	private final StringRedisTemplate redisTemplate;
 	private final MeterRegistry meterRegistry;
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+	public AmbulanceAssignmentListener(
+			ObjectMapper objectMapper,
+			AmbulanceProducer ambulanceProducer,
+			AmbulanceStateTracker ambulanceStateTracker,
+			AmbulanceMovementSimulator movementSimulator,
+			StringRedisTemplate redisTemplate,
+			MeterRegistry meterRegistry) {
+		this.objectMapper = objectMapper;
+		this.ambulanceProducer = ambulanceProducer;
+		this.ambulanceStateTracker = ambulanceStateTracker;
+		this.movementSimulator = movementSimulator;
+		this.redisTemplate = redisTemplate;
+		this.meterRegistry = meterRegistry;
+	}
 
 	@KafkaListener(topics = "ambulance-assigned-topic", groupId = "ambulance-driver-group")
 	public void consumeAssignment(String message) {
@@ -145,8 +161,8 @@ public class AmbulanceAssignmentListener {
 		// Pre-computing (version+1, version+2, version+3) breaks if any external event changes
 		// the version before the scheduled task fires (auto-heal, race condition, etc.)
 		scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ON_ROUTE, emergencyId), onRouteDelay, TimeUnit.SECONDS);
-		scheduler.schedule(() -> safeTransition(ambulanceId, AmbulanceStatus.ARRIVED, emergencyId), arrivedDelay, TimeUnit.SECONDS);
-		scheduler.schedule(() -> completeTrip(assignment, emergencyId), completedDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> transitionArrivedWhenReached(ambulanceId, emergencyId, 0), arrivedDelay, TimeUnit.SECONDS);
+		scheduler.schedule(() -> completeTrip(assignment, emergencyId, 0), completedDelay, TimeUnit.SECONDS);
 	}
 
 	/**
@@ -173,13 +189,52 @@ public class AmbulanceAssignmentListener {
 		}
 	}
 
-	private void completeTrip(AssignmentEvent assignment, String emergencyId) {
+	private void transitionArrivedWhenReached(String ambulanceId, String emergencyId, int retryCount) {
+		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
+		if (!emergencyId.equals(activeEmergencyId)) {
+			log.warn("Skipping ARRIVED transition for {} — activeEmergency mismatch (expected={} actual={})",
+					ambulanceId, emergencyId, activeEmergencyId);
+			return;
+		}
+
+		if (!movementSimulator.hasReachedDestination(ambulanceId)) {
+			if (retryCount >= MAX_TRANSITION_RETRIES) {
+				log.warn("ARRIVED transition forced for {} after {} retries; destination not confirmed",
+						ambulanceId, retryCount);
+				safeTransition(ambulanceId, AmbulanceStatus.ARRIVED, emergencyId);
+				return;
+			}
+			scheduler.schedule(
+					() -> transitionArrivedWhenReached(ambulanceId, emergencyId, retryCount + 1),
+					TRANSITION_RETRY_INTERVAL_SECONDS,
+					TimeUnit.SECONDS);
+			return;
+		}
+
+		safeTransition(ambulanceId, AmbulanceStatus.ARRIVED, emergencyId);
+	}
+
+	private void completeTrip(AssignmentEvent assignment, String emergencyId, int retryCount) {
 		String ambulanceId = assignment.getAmbulanceId();
 
 		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
 		if (!emergencyId.equals(activeEmergencyId)) {
 			log.warn("Skipping COMPLETED transition for {} — activeEmergency mismatch", ambulanceId);
 			return;
+		}
+
+		if (!movementSimulator.hasReachedDestination(ambulanceId)
+				|| ambulanceStateTracker.getStatus(ambulanceId) != AmbulanceStatus.ARRIVED) {
+			if (retryCount >= MAX_TRANSITION_RETRIES) {
+				log.warn("COMPLETED transition forced for {} after {} retries; destination/status not ready",
+						ambulanceId, retryCount);
+			} else {
+				scheduler.schedule(
+						() -> completeTrip(assignment, emergencyId, retryCount + 1),
+						TRANSITION_RETRY_INTERVAL_SECONDS,
+						TimeUnit.SECONDS);
+				return;
+			}
 		}
 
 		long currentVersion = ambulanceStateTracker.getVersion(ambulanceId);

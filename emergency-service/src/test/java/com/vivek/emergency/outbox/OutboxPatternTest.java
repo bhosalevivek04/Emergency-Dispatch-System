@@ -34,10 +34,10 @@ import static org.mockito.Mockito.*;
  * KafkaTemplate so we can simulate Kafka being up or down without real brokers.
  *
  * The four invariants being tested:
- *   1. Emergency + outbox entry are written atomically in one transaction
- *   2. OutboxPublisher marks the event published when Kafka succeeds
- *   3. OutboxPublisher retries when Kafka is down, then publishes on recovery
- *   4. Transaction rollback removes BOTH the emergency and the outbox entry
+ * 1. Emergency + outbox entry are written atomically in one transaction
+ * 2. OutboxPublisher marks the event published when Kafka succeeds
+ * 3. OutboxPublisher retries when Kafka is down, then publishes on recovery
+ * 4. Transaction rollback removes BOTH the emergency and the outbox entry
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -45,13 +45,18 @@ import static org.mockito.Mockito.*;
 @Import(TestKafkaConfig.class)
 class OutboxPatternTest {
 
-    @Autowired private EmergencyService emergencyService;
-    @Autowired private EmergencyRepository emergencyRepository;
-    @Autowired private OutboxEventRepository outboxRepository;
-    @Autowired private OutboxPublisher outboxPublisher;
+    @Autowired
+    private EmergencyService emergencyService;
+    @Autowired
+    private EmergencyRepository emergencyRepository;
+    @Autowired
+    private OutboxEventRepository outboxRepository;
+    @Autowired
+    private OutboxPublisher outboxPublisher;
 
     // Inject the mock KafkaTemplate from TestKafkaConfig
-    @Autowired private KafkaTemplate<String, Object> kafkaTemplate;
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
     @BeforeEach
     void setUp() {
@@ -153,14 +158,15 @@ class OutboxPatternTest {
     @DisplayName("TEST 4: Duplicate emergencyId returns existing record, does NOT create second outbox entry")
     void shouldNotCreateDuplicateOutboxEntryForDuplicateEmergencyId() {
         // When — create the same emergency twice
-        Emergency first  = emergencyService.createEmergency(event("EMG-004", "HIGH"));
+        Emergency first = emergencyService.createEmergency(event("EMG-004", "HIGH"));
         Emergency second = emergencyService.createEmergency(event("EMG-004", "HIGH")); // duplicate
 
         // Then — still exactly one emergency row (idempotent)
         assertThat(emergencyRepository.count()).isEqualTo(1);
         assertThat(first.getId()).isEqualTo(second.getId());
 
-        // Then — still exactly one outbox entry (second call took idempotency path, no new write)
+        // Then — still exactly one outbox entry (second call took idempotency path, no
+        // new write)
         assertThat(outboxRepository.count()).isEqualTo(1);
     }
 
@@ -169,8 +175,8 @@ class OutboxPatternTest {
     private EmergencyEvent event(String id, String priority) {
         EmergencyEvent e = new EmergencyEvent();
         e.setEmergencyId(id);
-        e.setLat(18.5204);
-        e.setLon(73.8567);
+        e.setLatitude(18.5204);
+        e.setLongitude(73.8567);
         e.setPriority(priority);
         return e;
     }

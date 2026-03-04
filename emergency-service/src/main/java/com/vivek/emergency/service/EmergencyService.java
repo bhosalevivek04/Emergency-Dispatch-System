@@ -20,21 +20,27 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Slf4j
 public class EmergencyService {
-    
+
     private static final String EMERGENCY_TOPIC = "emergency-topic";
-    
+
     private final EmergencyRepository emergencyRepository;
     private final OutboxEventRepository outboxRepository;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
-    
+
     /**
      * Saves emergency + outbox entry in ONE transaction.
      * The OutboxPublisher will pick up the outbox entry and push to Kafka.
-     * This guarantees no emergency is ever saved to DB but silently lost from Kafka.
+     * This guarantees no emergency is ever saved to DB but silently lost from
+     * Kafka.
      */
     @Transactional
     public Emergency createEmergency(EmergencyEvent event) {
+        // generate ID if not provided
+        if (event.getEmergencyId() == null || event.getEmergencyId().isBlank()) {
+            event.setEmergencyId("EMG-" + System.currentTimeMillis());
+            log.debug("Generated emergencyId {} for request", event.getEmergencyId());
+        }
         log.info("Creating emergency: {}", event.getEmergencyId());
 
         // Check for duplicates
@@ -46,7 +52,7 @@ public class EmergencyService {
         // 1. Save emergency to PostgreSQL
         Emergency emergency = new Emergency();
         emergency.setEmergencyId(event.getEmergencyId());
-        emergency.setCoordinates(event.getLat(), event.getLon());
+        emergency.setCoordinates(event.getLatitude(), event.getLongitude());
         emergency.setPriority(event.getPriority());
         emergency.setStatus("PENDING");
         Emergency saved = emergencyRepository.save(emergency);
@@ -57,7 +63,8 @@ public class EmergencyService {
             OutboxEvent outbox = OutboxEvent.of("EMERGENCY", saved.getEmergencyId(), EMERGENCY_TOPIC, payload);
             outboxRepository.save(outbox);
         } catch (JsonProcessingException e) {
-            // Throwing here rolls back BOTH the emergency save and the outbox write — correct behaviour
+            // Throwing here rolls back BOTH the emergency save and the outbox write —
+            // correct behaviour
             throw new RuntimeException("Failed to serialize emergency event for outbox: " + event.getEmergencyId(), e);
         }
 
@@ -65,7 +72,7 @@ public class EmergencyService {
         log.info("Emergency + outbox entry saved atomically: {}", saved.getEmergencyId());
         return saved;
     }
-    
+
     @Transactional
     public void updateStatus(String emergencyId, String status, String assignedAmbulanceId) {
         emergencyRepository.findByEmergencyId(emergencyId).ifPresentOrElse(e -> {
@@ -83,19 +90,19 @@ public class EmergencyService {
             log.info("Emergency status updated: {} -> {}", emergencyId, status);
         }, () -> log.warn("Emergency not found for status update: {}", emergencyId));
     }
-    
+
     public Optional<Emergency> findByEmergencyId(String emergencyId) {
         return emergencyRepository.findByEmergencyId(emergencyId);
     }
-    
+
     public List<Emergency> findByStatus(String status) {
         return emergencyRepository.findByStatus(status);
     }
-    
+
     public List<Emergency> findPendingEmergenciesByPriority() {
         return emergencyRepository.findPendingEmergenciesByPriority("PENDING");
     }
-    
+
     public long countByStatus(String status) {
         return emergencyRepository.countByStatus(status);
     }

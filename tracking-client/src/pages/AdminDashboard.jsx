@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { emergencyApi, ambulanceApi } from '../services/api';
 import { wsService } from '../services/websocketService';
@@ -30,12 +30,12 @@ const AdminDashboard = () => {
   // State for emergencies and ambulances (inherited from dispatcher)
   const [emergencies, setEmergencies] = useState([]);
   const [ambulances, setAmbulances] = useState([]);
-  
+
   // Loading states
   const [isLoadingEmergencies, setIsLoadingEmergencies] = useState(true);
   const [isLoadingAmbulances, setIsLoadingAmbulances] = useState(true);
   const [isLoadingMap, setIsLoadingMap] = useState(true);
-  
+
   // WebSocket connection state
   const [wsConnected, setWsConnected] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('disconnected');
@@ -43,6 +43,10 @@ const AdminDashboard = () => {
   // Selected items for highlighting
   const [selectedEmergency, setSelectedEmergency] = useState(null);
   const [selectedAmbulance, setSelectedAmbulance] = useState(null);
+  const [mapClickMode, setMapClickMode] = useState(false);
+  const emergencyPollRef = useRef(null);
+  const fleetPollRef = useRef(null);
+  const locationHandlerRef = useRef(null);
 
   /**
    * Fetch initial emergency data
@@ -62,7 +66,7 @@ const AdminDashboard = () => {
       console.error('Error fetching emergencies:', error);
       // Set empty array on error
       setEmergencies([]);
-      
+
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         showToast('Request timeout while loading emergencies. Please check your connection.', 'error');
       } else if (error.code === 'ERR_NETWORK' || !error.response) {
@@ -82,9 +86,11 @@ const AdminDashboard = () => {
   /**
    * Fetch initial ambulance data
    */
-  const fetchAmbulances = useCallback(async () => {
+  const fetchAmbulances = useCallback(async (silent = false) => {
     try {
-      setIsLoadingAmbulances(true);
+      if (!silent) {
+        setIsLoadingAmbulances(true);
+      }
       const fleet = await ambulanceApi.getFleet();
       // Ensure fleet is an array
       setAmbulances(Array.isArray(fleet) ? fleet : []);
@@ -92,7 +98,7 @@ const AdminDashboard = () => {
       console.error('Error fetching ambulances:', error);
       // Set empty array on error
       setAmbulances([]);
-      
+
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         showToast('Request timeout while loading fleet. Please check your connection.', 'error');
       } else if (error.code === 'ERR_NETWORK' || !error.response) {
@@ -105,45 +111,12 @@ const AdminDashboard = () => {
         showToast('Failed to load ambulance fleet. Please try again.', 'error');
       }
     } finally {
-      setIsLoadingAmbulances(false);
-      setIsLoadingMap(false);
+      if (!silent) {
+        setIsLoadingAmbulances(false);
+        setIsLoadingMap(false);
+      }
     }
   }, [showToast]);
-
-  /**
-   * Handle emergency creation
-   */
-  const handleCreateEmergency = async (latitude, longitude, priority) => {
-    try {
-      const newEmergency = await emergencyApi.create({
-        latitude,
-        longitude,
-        priority,
-      });
-      
-      setEmergencies(prev => [...prev, newEmergency]);
-      showToast(`Emergency ${newEmergency.id} created successfully`, 'success');
-      return newEmergency;
-    } catch (error) {
-      console.error('Error creating emergency:', error);
-      
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        showToast('Request timeout while creating emergency. Please try again.', 'error');
-      } else if (error.code === 'ERR_NETWORK' || !error.response) {
-        showToast('Network error: Unable to create emergency. Please check your connection.', 'error');
-      } else if (error.response?.status === 400) {
-        showToast('Invalid emergency data. Please check the location and priority.', 'error');
-      } else if (error.response?.status === 403) {
-        showToast('Access denied: You do not have permission to create emergencies.', 'error');
-      } else if (error.response?.status >= 500) {
-        showToast('Server error while creating emergency. Please try again later.', 'error');
-      } else {
-        showToast('Failed to create emergency. Please try again.', 'error');
-      }
-      
-      throw error;
-    }
-  };
 
   /**
    * Handle emergency marker click
@@ -167,49 +140,32 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (!accessToken) return;
 
-    let unsubEmergencies;
     let unsubLocations;
-    let unsubStatus;
     let reconnectTimeout;
 
     const connectWebSocket = async () => {
       try {
         setWsConnectionState('connecting');
-        
+
         await wsService.connect(accessToken);
         setWsConnected(true);
         setWsConnectionState('connected');
 
-        unsubEmergencies = wsService.subscribe('/topic/emergencies', (emergency) => {
-          console.log('Received emergency update:', emergency);
-          setEmergencies(prev => {
-            const index = prev.findIndex(e => e.id === emergency.id);
-            if (index >= 0) {
-              const updated = [...prev];
-              updated[index] = emergency;
-              return updated;
-            } else {
-              return [...prev, emergency];
-            }
-          });
-        });
-
-        unsubLocations = wsService.subscribe('/topic/ambulances/location', (update) => {
+        // Subscribe to ambulance location updates (only real topic that exists)
+        unsubLocations = wsService.subscribe('/topic/location', (update) => {
           console.log('Received location update:', update);
           setAmbulances(prev =>
             prev.map(amb =>
               amb.id === update.ambulanceId
-                ? { ...amb, latitude: update.latitude, longitude: update.longitude }
+                ? {
+                  ...amb,
+                  latitude: update.latitude,
+                  longitude: update.longitude,
+                  speed: update.speed,
+                  heading: update.heading,
+                  status: update.status ?? amb.status
+                }
                 : amb
-            )
-          );
-        });
-
-        unsubStatus = wsService.subscribe('/topic/ambulances/status', (ambulance) => {
-          console.log('Received status update:', ambulance);
-          setAmbulances(prev =>
-            prev.map(amb =>
-              amb.id === ambulance.id ? ambulance : amb
             )
           );
         });
@@ -219,7 +175,7 @@ const AdminDashboard = () => {
         console.error('WebSocket connection failed:', error);
         setWsConnected(false);
         setWsConnectionState('error');
-        
+
         if (error.message?.includes('401') || error.message?.includes('Unauthorized')) {
           showToast('WebSocket authentication failed. Please log in again.', 'error');
         } else if (error.message?.includes('timeout')) {
@@ -246,9 +202,7 @@ const AdminDashboard = () => {
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
       }
-      if (unsubEmergencies) unsubEmergencies();
       if (unsubLocations) unsubLocations();
-      if (unsubStatus) unsubStatus();
       wsService.disconnect();
       setWsConnected(false);
       setWsConnectionState('disconnected');
@@ -260,7 +214,22 @@ const AdminDashboard = () => {
    */
   useEffect(() => {
     fetchEmergencies();
-    fetchAmbulances();
+    fetchAmbulances(false);
+
+    // Poll emergencies so status transitions (ON_ROUTE/ARRIVED/COMPLETED)
+    // are reflected in queue without manual refresh.
+    emergencyPollRef.current = setInterval(fetchEmergencies, 15000);
+    // Poll fleet so status transitions are reflected even if WS payload has no status field.
+    fleetPollRef.current = setInterval(() => fetchAmbulances(true), 5000);
+
+    return () => {
+      if (emergencyPollRef.current) {
+        clearInterval(emergencyPollRef.current);
+      }
+      if (fleetPollRef.current) {
+        clearInterval(fleetPollRef.current);
+      }
+    };
   }, [fetchEmergencies, fetchAmbulances]);
 
   return (
@@ -270,7 +239,7 @@ const AdminDashboard = () => {
         <h1>Admin Dashboard</h1>
         <div className="header-actions">
           <span className="user-info">Welcome, {user?.username}</span>
-          
+
           {/* WebSocket connection status indicator */}
           <ConnectionStatus status={wsConnectionState} />
           {wsConnectionState === 'disconnected' && !wsConnected && (
@@ -278,7 +247,7 @@ const AdminDashboard = () => {
               ● Offline
             </span>
           )}
-          
+
           <button onClick={logout} className="logout-button">
             Logout
           </button>
@@ -296,6 +265,9 @@ const AdminDashboard = () => {
               <MapComponent
                 center={[18.5204, 73.8567]}
                 zoom={13}
+                onMapClick={mapClickMode ? (lat, lng) => {
+                  locationHandlerRef.current?.(lat, lng);
+                } : undefined}
               >
                 {/* Render emergency markers */}
                 {emergencies.map(emergency => (
@@ -318,7 +290,12 @@ const AdminDashboard = () => {
 
               {/* Emergency creation control */}
               <EmergencyCreationControl
-                onCreateEmergency={handleCreateEmergency}
+                onEmergencyCreated={(e) => setEmergencies(prev => [...prev, e])}
+                onModeChange={setMapClickMode}
+                onLocationHandlerReady={(handler) => {
+                  locationHandlerRef.current = handler;
+                }}
+                showToast={showToast}
               />
             </>
           )}
@@ -346,14 +323,14 @@ const AdminDashboard = () => {
           {/* Admin-specific panels */}
           <FleetManagementPanel />
           <SystemHealthPanel />
-          
+
           {/* Grafana Metrics Link */}
           <div className="metrics-link-panel">
             <h2>System Metrics</h2>
             <p>View detailed system metrics and performance data in Grafana.</p>
-            <a 
-              href="http://localhost:3001" 
-              target="_blank" 
+            <a
+              href="http://localhost:3001"
+              target="_blank"
               rel="noopener noreferrer"
               className="grafana-link-button"
             >

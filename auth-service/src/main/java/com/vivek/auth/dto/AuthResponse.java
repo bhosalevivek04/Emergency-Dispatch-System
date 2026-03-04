@@ -16,4 +16,5 @@ public class AuthResponse {
     private Long expiresIn; // seconds
     private String username;
     private String roles;
+    private String ambulanceId;
 }

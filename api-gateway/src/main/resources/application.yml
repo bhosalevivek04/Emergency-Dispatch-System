@@ -11,6 +11,8 @@ spring:
       timeout: 2000ms
   cloud:
     gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
       routes:
         # Auth Service Routes (PUBLIC - no JWT required)
         - id: auth-service
@@ -50,7 +52,7 @@ spring:
           predicates:
             - Path=/api/tracking,/api/tracking/**
           filters:
-            - RewritePath=/api/tracking(?<segment>/?.*), /api/tracking${segment}
+            - RewritePath=/api/tracking(?<segment>/?.*), /tracking${segment}
 
         # WebSocket Route for Tracking Service
         - id: tracking-websocket

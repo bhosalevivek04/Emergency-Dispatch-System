@@ -39,16 +39,15 @@ class EmergencyIntegrationTest {
         // Given
         EmergencyEvent event = new EmergencyEvent();
         event.setEmergencyId("EMG-INT-001");
-        event.setLat(18.5204);
-        event.setLon(73.8567);
+        event.setLatitude(18.5204);
+        event.setLongitude(73.8567);
         event.setPriority("HIGH");
 
         // When
         ResponseEntity<Emergency> response = restTemplate.postForEntity(
-            "/emergency",
-            event,
-            Emergency.class
-        );
+                "/emergency",
+                event,
+                Emergency.class);
 
         // Then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -75,9 +74,8 @@ class EmergencyIntegrationTest {
 
         // When
         ResponseEntity<Emergency> response = restTemplate.getForEntity(
-            "/emergency/EMG-INT-002",
-            Emergency.class
-        );
+                "/emergency/EMG-INT-002",
+                Emergency.class);
 
         // Then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -89,9 +87,8 @@ class EmergencyIntegrationTest {
     void shouldReturnNotFoundForNonExistentEmergency() {
         // When
         ResponseEntity<Emergency> response = restTemplate.getForEntity(
-            "/emergency/NON-EXISTENT",
-            Emergency.class
-        );
+                "/emergency/NON-EXISTENT",
+                Emergency.class);
 
         // Then
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);

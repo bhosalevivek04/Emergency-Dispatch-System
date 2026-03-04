@@ -195,13 +195,12 @@ services:
     build: ./api-gateway
     container_name: api-gateway
     depends_on:
-      auth-service:
-        condition: service_healthy
-      emergency-service:
-      dispatch-service:
-      ambulance-service:
-      tracking-service:
-      notification-service:
+      - auth-service
+      - emergency-service
+      - dispatch-service
+      - ambulance-service
+      - tracking-service
+      - notification-service
     ports:
       - "8080:8080"
     environment:
@@ -271,3 +270,4 @@ volumes:
 networks:
   dispatch-network:
     driver: bridge
+

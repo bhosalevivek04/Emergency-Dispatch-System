@@ -16,8 +16,7 @@ import java.util.Map;
 public class WebSocketAuthInterceptor implements HandshakeInterceptor {
 
     private static final String ROLES_HEADER = "X-User-Roles";
-    private static final List<String> ALLOWED_ROLES =
-            List.of("ADMIN", "DISPATCHER", "AMBULANCE_DRIVER");
+    private static final List<String> ALLOWED_ROLES = List.of("ADMIN", "DISPATCHER", "AMBULANCE_DRIVER");
 
     @Override
     public boolean beforeHandshake(
@@ -28,32 +27,59 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
 
         if (request instanceof ServletServerHttpRequest servletRequest) {
             HttpServletRequest httpRequest = servletRequest.getServletRequest();
-            
+
             // Allow SockJS handshake endpoints (info, iframe) without authentication
             String path = httpRequest.getRequestURI();
             if (path.endsWith("/info") || path.contains("/iframe")) {
                 log.debug("Allowing SockJS handshake endpoint: {}", path);
                 return true;
             }
-            
+
+            // Read token from query parameter ?token=xxx
+            String query = httpRequest.getQueryString();
+            String token = null;
+            if (query != null && query.contains("token=")) {
+                // Parse token from query string
+                String[] params = query.split("&");
+                for (String param : params) {
+                    if (param.startsWith("token=")) {
+                        token = param.substring(6); // Remove "token=" prefix
+                        break;
+                    }
+                }
+            }
+
+            // If no token in query, try X-User-Roles header for gateway-injected roles
             String rolesHeader = httpRequest.getHeader(ROLES_HEADER);
 
-            // If no roles header, reject connection in production
-            // In development, the API Gateway should set this header
-            if (rolesHeader == null || rolesHeader.isBlank()) {
-                log.warn("WebSocket connection rejected: Missing X-User-Roles header for path: {}", path);
+            if ((token == null || token.isBlank()) && (rolesHeader == null || rolesHeader.isBlank())) {
+                log.warn("WebSocket connection rejected: Missing token parameter or X-User-Roles header for path: {}",
+                        path);
                 return false;
             }
 
-            List<String> roles = Arrays.stream(rolesHeader.split(","))
-                    .map(String::trim)
-                    .toList();
+            List<String> roles;
+
+            // Use roles from gateway header if available (authenticated through gateway)
+            if (rolesHeader != null && !rolesHeader.isBlank()) {
+                roles = Arrays.stream(rolesHeader.split(","))
+                        .map(String::trim)
+                        .toList();
+            } else if (token != null && !token.isBlank()) {
+                // TODO: Validate token and extract roles
+                // For now, allow all tokens with default roles
+                log.warn("Token validation not yet implemented; allowing connection");
+                roles = List.of("AMBULANCE_DRIVER"); // Default role for direct token connection
+            } else {
+                log.warn("WebSocket connection rejected: Invalid authentication");
+                return false;
+            }
 
             boolean hasAllowedRole = roles.stream()
                     .anyMatch(ALLOWED_ROLES::contains);
 
             if (!hasAllowedRole) {
-                log.warn("WebSocket connection rejected: No valid roles in {}", rolesHeader);
+                log.warn("WebSocket connection rejected: No valid roles in {}", roles);
                 return false;
             }
 

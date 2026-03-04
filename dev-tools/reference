@@ -1,183 +1,802 @@
-Let me do a thorough scan of the current frontend and backend capabilities before making the plan.Now I have the complete picture of everything — frontend, backend, APIs, roles, routing. Here's the full plan:
+What to copy where
+Frontend — tracking-client/src/
+FileReplaceservices/api.jsBugs 4, 5, 6, 7, 8, 10services/websocketService.jsBug 1contexts/AuthContext.jsxBug 10 + roles parsingpages/DispatcherDashboard.jsxBug 2pages/AdminDashboard.jsxBug 2pages/DriverDashboard.jsxBug 8, 11
+Also delete tracking-client/src/services/websocket.js (Bug 3 — dead conflicting file).
+Nginx
+FileReplacetracking-client/nginx.confBug 9
+Backend — drop files into existing package folders
+FileServicePackage pathEmergencyController.javaemergency-servicecontroller/EmergencyEvent.javaemergency-servicedto/AmbulanceController.javaambulance-servicecontroller/User.javaauth-serviceentity/RegisterRequest.javaauth-servicedto/AuthResponse.javaauth-servicedto/AuthService.javaauth-serviceservice/WebSocketConfig.javatracking-serviceconfig/WebSocketAuthInterceptor.javatracking-servicesecurity/
+One database migration needed (Bug 11)
+The users table needs the new column. Add this to your Flyway/Liquibase migrations or run manually:
+sqlALTER TABLE users ADD COLUMN ambulance_id VARCHAR(50);
+Then when registering driver accounts, include "ambulanceId": "AMB-101" in the register request body.
+import apiClient from './apiClient.js';
 
----
+/**
+ * Typed API functions for the Emergency Dispatch System.
+ *
+ * Bug 4 Fix: Emergency create payload now sends correct field names (latitude/longitude)
+ *            and auto-generates emergencyId client-side as fallback.
+ *
+ * Bug 5 Fix: All emergency responses are normalized so components always receive
+ *            { id: string (emergencyId), latitude: number, longitude: number, ... }
+ *            instead of raw { id: Long, emergencyId: string, latitude: BigDecimal, ... }
+ *
+ * Bug 7 Fix: ambulanceApi.getFleet() merges fleet state (status/version from ambulance-service)
+ *            with live location data (lat/lon/speed from tracking-service) into one array.
+ *
+ * Bug 8 Fix: ambulanceApi.getById() now uses the new GET /ambulance/{id} endpoint.
+ */
 
-# 🗺️ Complete Frontend Rebuild & Feature Plan
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-## What the Frontend Currently Is
+/**
+ * Normalize raw Emergency entity from backend into a consistent frontend shape.
+ * Backend returns: { id: Long, emergencyId: String, latitude: BigDecimal, ... }
+ * Frontend expects: { id: String, latitude: Number, longitude: Number, ... }
+ */
+function normalizeEmergency(e) {
+  return {
+    ...e,
+    id: e.emergencyId || String(e.id),   // use business ID as primary key
+    latitude: Number(e.latitude),
+    longitude: Number(e.longitude),
+    createdAt: e.createdAt || new Date().toISOString(),
+  };
+}
 
-A single-purpose **tracking-only app** — no login, no roles, hardcoded to `localhost:8085`, talks directly to the tracking service bypassing the gateway entirely. It shows ambulances on a map and has a simulation panel. That's it.
+// ── Auth API ─────────────────────────────────────────────────────────────────
 
----
+export const authApi = {
+  login: (credentials) =>
+    apiClient.post('/auth/login', credentials).then(res => res.data),
 
-## What Needs to Be Built
+  refresh: (refreshToken) =>
+    apiClient.post('/auth/refresh', { refreshToken }).then(res => res.data),
 
-### The 3 Role-Based Dashboards
+  logout: () =>
+    apiClient.post('/auth/logout').then(res => res.data),
+};
 
-Your backend already supports 3 roles. The frontend needs to match:
+// ── Emergency API ─────────────────────────────────────────────────────────────
 
-| Role | What they do | Dashboard focus |
-|------|-------------|----------------|
-| `ADMIN` | Full system access | Everything — monitoring, users, fleet, system health |
-| `DISPATCHER` | Create emergencies, watch fleet, assign | Emergency creation + live map + fleet status |
-| `AMBULANCE_DRIVER` | See their assignment, update location | Single ambulance view + their active mission |
+export const emergencyApi = {
+  /**
+   * Bug 4 Fix: sends correct field names to match EmergencyEvent DTO.
+   * Backend now accepts latitude/longitude (fixed DTO) and auto-generates emergencyId.
+   */
+  create: (data) =>
+    apiClient.post('/api/emergencies', {
+      latitude: data.latitude,
+      longitude: data.longitude,
+      priority: data.priority,
+    }).then(res => normalizeEmergency(res.data)),
 
----
+  /** Bug 5 Fix: normalize response */
+  getById: (id) =>
+    apiClient.get(`/api/emergencies/${id}`).then(res => normalizeEmergency(res.data)),
 
-## Phase 1 — Foundation (Do This First)
+  /** Bug 5 Fix: normalize every item in the list */
+  getByStatus: (status) =>
+    apiClient.get(`/api/emergencies/status/${status}`)
+      .then(res => (Array.isArray(res.data) ? res.data : []).map(normalizeEmergency)),
 
-**Goal: Auth + routing + shared API layer. Everything else depends on this.**
+  /**
+   * Bug 6 Fix: PUT /api/emergencies/{id}/status — new endpoint added to backend.
+   * Used by DriverDashboard to update mission status.
+   */
+  updateStatus: (id, status) =>
+    apiClient.put(`/api/emergencies/${id}/status`, { status })
+      .then(res => normalizeEmergency(res.data)),
+};
 
-### 1.1 — Auth Pages
-- **Login page** — username + password → `POST /auth/login` via gateway (`:8080`) → store `accessToken`, `refreshToken`, `username`, `roles` in memory (not localStorage — your environment doesn't support it, use React context/state)
-- **Auto token refresh** — intercept 401 responses → `POST /auth/refresh` → retry original request
-- **Logout** — `POST /auth/logout` → clear state → redirect to login
+// ── Ambulance API ─────────────────────────────────────────────────────────────
 
-### 1.2 — Role-Based Router
-After login, read `roles` from the auth response and route to the correct dashboard:
-```
-ADMIN        → /dashboard/admin
-DISPATCHER   → /dashboard/dispatcher
-AMBULANCE_DRIVER → /dashboard/driver
-```
-Each dashboard is a completely separate layout. No user should ever see controls they can't use.
+export const ambulanceApi = {
+  /**
+   * Bug 7 Fix: merge fleet state (status/version) with tracking locations (lat/lon/speed).
+   *
+   * GET /api/ambulances/fleet returns:
+   *   { fleet: { "AMB-101": { status, version, available } }, total: 3 }
+   *
+   * GET /api/tracking/ambulances returns:
+   *   { "AMB-101": { ambulanceId, latitude, longitude, speed, heading, timestamp }, ... }
+   *
+   * We merge both into a flat array with all fields so AmbulanceMarker renders correctly.
+   */
+  getFleet: async () => {
+    const [fleetRes, trackingRes] = await Promise.all([
+      apiClient.get('/api/ambulances/fleet'),
+      apiClient.get('/api/tracking/ambulances').catch(() => ({ data: {} })), // graceful fallback
+    ]);
 
-### 1.3 — API Service Layer
-Replace the hardcoded `localhost:8085` calls with a unified API client that:
-- Points everything at the gateway `http://localhost:8080`
-- Attaches `Authorization: Bearer <token>` to every request automatically
-- Handles 401 → refresh → retry
-- Has typed functions for every endpoint: `createEmergency()`, `getAvailableAmbulances()`, `getFleetStatus()`, etc.
+    const fleetMap = fleetRes.data?.fleet || {};
+    // tracking returns either a Map<String,Event> or an array — normalize to map
+    const rawTracking = trackingRes.data || {};
+    const locationMap = Array.isArray(rawTracking)
+      ? rawTracking.reduce((acc, loc) => { acc[loc.ambulanceId] = loc; return acc; }, {})
+      : rawTracking;
 
-### 1.4 — Fix nginx.conf
-Currently proxies to `tracking-service:8085` directly. Needs to proxy `/api` and `/auth` to `api-gateway:8080` instead so JWT gets validated on every request.
+    return Object.entries(fleetMap).map(([id, state]) => {
+      const loc = locationMap[id] || {};
+      return {
+        id,
+        status: state.status || 'UNKNOWN',
+        version: state.version ?? 0,
+        available: state.available ?? false,
+        latitude: Number(loc.latitude ?? 18.5204),
+        longitude: Number(loc.longitude ?? 73.8567),
+        speed: Number(loc.speed ?? 0),
+        heading: Number(loc.heading ?? 0),
+      };
+    });
+  },
 
----
+  getAvailable: () =>
+    apiClient.get('/api/ambulances/available').then(res => res.data),
 
-## Phase 2 — Dispatcher Dashboard
+  /**
+   * Bug 8 Fix: uses GET /api/ambulances/{id} — new endpoint added to backend.
+   * Returns merged ambulance state + location.
+   */
+  getById: async (id) => {
+    const [stateRes, locRes] = await Promise.all([
+      apiClient.get(`/api/ambulances/${id}`),
+      apiClient.get(`/api/tracking/ambulances/${id}`).catch(() => ({ data: {} })),
+    ]);
+    const state = stateRes.data || {};
+    const loc = locRes.data || {};
+    return {
+      id: state.id || id,
+      status: state.status || 'AVAILABLE',
+      version: state.version ?? 0,
+      available: state.available ?? true,
+      latitude: Number(loc.latitude ?? 18.5204),
+      longitude: Number(loc.longitude ?? 73.8567),
+      speed: Number(loc.speed ?? 0),
+      heading: Number(loc.heading ?? 0),
+      assignedEmergencyId: state.assignedEmergencyId || null,
+    };
+  },
+};
 
-**The most feature-rich role — main operational interface.**
+// ── Tracking API ──────────────────────────────────────────────────────────────
 
-### 2.1 — Live Map (upgrade existing)
-Keep the Leaflet map but add:
-- Emergency markers (red pin) showing location + priority badge (HIGH/MEDIUM/LOW)
-- Ambulance markers colored by status: green=AVAILABLE, yellow=ASSIGNED, red=ON_ROUTE
-- Click ambulance → popup shows: ID, status, current speed, active emergency ID
-- Click emergency marker → popup shows: ID, priority, status, assigned ambulance
+export const trackingApi = {
+  updateLocation: (data) =>
+    apiClient.post('/api/tracking/location', data).then(res => res.data),
+};
 
-### 2.2 — Create Emergency Panel
-Form with:
-- Click-on-map to pick coordinates (instead of typing lat/lon)
-- Priority selector (HIGH / MEDIUM / LOW)
-- Submit → `POST /api/emergencies` with JWT
-- On success: new emergency marker appears on map instantly
-- Show toast: "Emergency EMG-XXX created — dispatching..."
+// ── Diagnostic API (Admin only) ───────────────────────────────────────────────
 
-### 2.3 — Emergency Queue Panel
-Real-time list of all active emergencies pulled from `GET /api/emergencies/status/PENDING` and `GET /api/emergencies/status/ASSIGNED`:
-- Sorted by priority (HIGH first)
-- Each row shows: ID, priority badge, status, time since creation, assigned ambulance (or "Pending")
-- Color-coded rows: red=HIGH, orange=MEDIUM, blue=LOW
+export const diagnosticApi = {
+  initFleet: () =>
+    apiClient.post('/diagnostic/init-fleet').then(res => res.data),
 
-### 2.4 — Fleet Status Panel
-From `GET /api/ambulances/available` and `GET /api/ambulances/fleet`:
-- Summary counts: X Available / Y Assigned / Z On Route
-- Per-ambulance row: ID, status pill, current speed if moving
+  getFleetStatus: () =>
+    apiClient.get('/diagnostic/fleet-status').then(res => res.data),
 
----
+  getServiceHealth: (service) => {
+    const url = service ? `/actuator/health/${service}` : '/actuator/health';
+    return apiClient.get(url).then(res => res.data);
+  },
+};
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { initializeApiClient } from '../services/apiClient';
 
-## Phase 3 — Admin Dashboard
+const AuthContext = createContext(null);
 
-**Operational + system oversight.**
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
+  return context;
+};
 
-### 3.1 — Everything in Dispatcher Dashboard (Admin inherits all)
-Admin can do everything a dispatcher can.
+export const AuthProvider = ({ children }) => {
+  const navigate = useNavigate();
 
-### 3.2 — Fleet Management Panel
-- `GET /api/ambulances/fleet` → full fleet table with version numbers
-- `POST /diagnostic/init-fleet` button → reinitialize fleet (admin only)
-- `GET /diagnostic/fleet-status` → detailed state per ambulance
+  const [authState, setAuthState] = useState({
+    isAuthenticated: false,
+    user: null,
+    accessToken: null,
+    refreshToken: null,
+  });
 
-### 3.3 — System Health Panel
-Poll all actuator health endpoints via gateway:
-- `GET /actuator/health` per service
-- Show green/red status indicator per service (emergency, dispatch, ambulance, tracking, notification, auth)
-- Kafka consumer lag indicator if available
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
 
-### 3.4 — Metrics Dashboard
-Link out (or embed iframe) to Grafana at `:3001` for deeper metrics.
+  // ── Token refresh ──────────────────────────────────────────────────────────
 
----
+  const refreshAccessToken = useCallback(async () => {
+    try {
+      const refreshToken = authState.refreshToken || sessionStorage.getItem('refreshToken');
+      if (!refreshToken) throw new Error('No refresh token available');
 
-## Phase 4 — Ambulance Driver Dashboard
+      const response = await fetch('http://localhost:8080/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
 
-**Mobile-first, simple, mission-focused.**
+      if (!response.ok) throw new Error('Token refresh failed');
 
-### 4.1 — My Active Mission View
-- `GET /api/emergencies/{emergencyId}` → show assigned emergency details
-- Emergency location on map with route line to it
-- ETA countdown based on current position + OSRM distance
-- Status: "ASSIGNED → ON_ROUTE → ARRIVED → COMPLETED"
+      const data = await response.json();
+      setAuthState(prev => ({ ...prev, accessToken: data.accessToken }));
+      return data.accessToken;
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      sessionStorage.removeItem('refreshToken');
+      sessionStorage.removeItem('user');
+      setAuthState({ isAuthenticated: false, user: null, accessToken: null, refreshToken: null });
+      navigate('/login');
+      throw error;
+    }
+  }, [authState.refreshToken, navigate]);
 
-### 4.2 — Location Updates (fix existing simulation)
-The current `simulation.js` posts to `localhost:8085/tracking/location` directly without auth. Fix it to:
-- Post to `http://localhost:8080/api/tracking/location` (via gateway)
-- Include `Authorization: Bearer <token>` header
-- Works for both real GPS (future) and simulated movement now
+  // ── Initialise apiClient with live token getter ────────────────────────────
 
-### 4.3 — Simple Map View
-Stripped-down map showing only:
-- Their own ambulance position (no clutter from other ambulances)
-- Route line to the emergency
-- Progress indicator (same as current InfoPanel but fullscreen)
+  useEffect(() => {
+    initializeApiClient({
+      get accessToken() { return authState.accessToken; },
+      refreshAccessToken,
+    });
+  }, [authState.accessToken, refreshAccessToken]);
 
----
+  // ── Session restoration on app load ───────────────────────────────────────
 
-## Phase 5 — Real-Time Updates Across All Dashboards
+  useEffect(() => {
+    const restoreSession = async () => {
+      try {
+        const storedRefreshToken = sessionStorage.getItem('refreshToken');
+        const storedUser = sessionStorage.getItem('user');
+        if (!storedRefreshToken || !storedUser) return;
 
-### 5.1 — Authenticated WebSocket
-Current WebSocket connects to `localhost:8085/ws-sockjs` directly, no auth header. Fix:
-- Connect through gateway WebSocket route: `ws://localhost:8080/ws/ws-sockjs`
-- Pass JWT as a query param or STOMP header: `stompClient.connectHeaders = { Authorization: 'Bearer ' + token }`
+        const response = await fetch('http://localhost:8080/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: storedRefreshToken }),
+        });
 
-### 5.2 — Emergency Status Updates via WebSocket
-Currently only ambulance location is pushed over WebSocket. You should also push emergency status changes so dispatchers see `PENDING → ASSIGNED → COMPLETED` in real-time without polling. This requires a small backend addition: publish to a `/topic/emergencies` STOMP topic from `EmergencyStatusListener`.
+        if (!response.ok) throw new Error('Session restore failed');
 
----
+        const data = await response.json();
+        const user = JSON.parse(storedUser);
 
-## Recommended Tech Stack for Rebuild
+        setAuthState({
+          isAuthenticated: true,
+          user,
+          accessToken: data.accessToken,
+          refreshToken: storedRefreshToken,
+        });
+      } catch (error) {
+        console.error('Session restoration failed:', error);
+        sessionStorage.removeItem('refreshToken');
+        sessionStorage.removeItem('user');
+      } finally {
+        setIsRestoringSession(false);
+      }
+    };
 
-Stay with React (you're already there) but add:
+    restoreSession();
+  }, []);
 
-| Need | Library | Why |
-|------|---------|-----|
-| Routing | `react-router-dom v6` | Role-based route protection |
-| State | React Context + `useReducer` | Auth state, no localStorage needed |
-| UI components | Tailwind CSS (CDN) | Already configured in your artifacts |
-| Notifications | Custom toast component | Simple, no extra dep |
-| HTTP client | Native `fetch` with interceptor wrapper | Already works |
+  // ── Login ──────────────────────────────────────────────────────────────────
 
-No need for Redux — React context is sufficient for auth state + ambulance data.
+  const login = useCallback(async (username, password) => {
+    const response = await fetch('http://localhost:8080/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
 
----
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || 'Login failed');
+    }
 
-## Recommended Build Order
+    const data = await response.json();
 
-```
-Week 1:  Phase 1 (Auth + API layer + routing)
-Week 2:  Phase 2 (Dispatcher dashboard — highest value)
-Week 3:  Phase 3 (Admin dashboard — builds on Phase 2)
-Week 4:  Phase 4 (Driver dashboard) + Phase 5 (Real-time fixes)
-```
+    // Build user object — include ambulanceId (Bug 11 Fix)
+    const user = {
+      username: data.username,
+      roles: data.roles,           // "ADMIN" | "DISPATCHER" | "AMBULANCE_DRIVER"
+      ambulanceId: data.ambulanceId || null,
+    };
 
----
+    sessionStorage.setItem('refreshToken', data.refreshToken);
+    sessionStorage.setItem('user', JSON.stringify(user));
 
-## Quick Wins You Can Do Right Now (1–2 hours each)
+    setAuthState({
+      isAuthenticated: true,
+      user,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+    });
 
-1. **Fix nginx.conf** to proxy through gateway instead of directly to tracking-service — 15 min, immediately makes auth work in the existing app
-2. **Add a Login page** with just username/password → store token in React state → unblock everything else
-3. **Fix `simulation.js`** to attach JWT header — makes driver location updates actually go through auth
+    // Route to role-appropriate dashboard
+    if (data.roles?.includes('ADMIN')) {
+      navigate('/dashboard/admin');
+    } else if (data.roles?.includes('DISPATCHER')) {
+      navigate('/dashboard/dispatcher');
+    } else if (data.roles?.includes('AMBULANCE_DRIVER')) {
+      navigate('/dashboard/driver');
+    }
+  }, [navigate]);
 
----
+  // ── Logout ─────────────────────────────────────────────────────────────────
 
-Want me to start coding any specific phase? I'd suggest starting with **Phase 1** (auth + API layer + login page) since everything else is blocked until that's done.
+  const logout = useCallback(async () => {
+    try {
+      // Bug 10 Fix: send refreshToken in logout body so server can revoke it
+      const rt = authState.refreshToken || sessionStorage.getItem('refreshToken');
+      await fetch('http://localhost:8080/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authState.accessToken}`,
+        },
+        body: JSON.stringify({ refreshToken: rt }),
+      });
+    } catch (error) {
+      console.error('Logout API error:', error);
+    } finally {
+      sessionStorage.removeItem('refreshToken');
+      sessionStorage.removeItem('user');
+      setAuthState({ isAuthenticated: false, user: null, accessToken: null, refreshToken: null });
+      navigate('/login');
+    }
+  }, [authState.accessToken, authState.refreshToken, navigate]);
+
+  // ── Context value ──────────────────────────────────────────────────────────
+
+  const value = { ...authState, login, logout, refreshAccessToken };
+
+  if (isRestoringSession) {
+    return (
+      <AuthContext.Provider value={value}>
+        <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:'100vh', fontSize:18, color:'#666' }}>
+          Restoring session...
+        </div>
+      </AuthContext.Provider>
+    );
+  }
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { emergencyApi, ambulanceApi } from '../services/api';
+import { wsService } from '../services/websocketService';
+import MapComponent from '../components/map/MapComponent';
+import EmergencyMarker from '../components/map/EmergencyMarker';
+import AmbulanceMarker from '../components/map/AmbulanceMarker';
+import EmergencyQueuePanel from '../components/EmergencyQueuePanel';
+import FleetStatusPanel from '../components/FleetStatusPanel';
+import EmergencyCreationControl from '../components/EmergencyCreationControl';
+import SkeletonLoader from '../components/SkeletonLoader';
+import ConnectionStatus from '../components/ConnectionStatus';
+import { useToast } from '../contexts/ToastContext';
+import './DispatcherDashboard.css';
+
+/**
+ * DispatcherDashboard
+ *
+ * Bug 2 Fix: Only subscribes to /topic/location (the only topic the backend publishes).
+ *            Emergency status changes are polled every 15s instead of via non-existent WS topics.
+ * Bug 7 Fix: ambulanceApi.getFleet() now returns merged array with lat/lon/speed.
+ */
+const DispatcherDashboard = () => {
+  const { user, logout, accessToken } = useAuth();
+  const { showToast } = useToast();
+
+  const [emergencies, setEmergencies] = useState([]);
+  const [ambulances, setAmbulances] = useState({});  // keyed by id for fast WS updates
+  const [isLoadingEmergencies, setIsLoadingEmergencies] = useState(true);
+  const [isLoadingAmbulances, setIsLoadingAmbulances] = useState(true);
+  const [isLoadingMap, setIsLoadingMap] = useState(true);
+  const [wsConnectionState, setWsConnectionState] = useState('disconnected');
+  const [selectedEmergency, setSelectedEmergency] = useState(null);
+  const [selectedAmbulance, setSelectedAmbulance] = useState(null);
+  const [mapClickMode, setMapClickMode] = useState(false);
+
+  const pollIntervalRef = useRef(null);
+
+  // ── Data fetching ────────────────────────────────────────────────────────
+
+  const fetchEmergencies = useCallback(async () => {
+    try {
+      const [pending, assigned] = await Promise.all([
+        emergencyApi.getByStatus('PENDING'),
+        emergencyApi.getByStatus('ASSIGNED'),
+      ]);
+      setEmergencies([...pending, ...assigned]);
+    } catch (error) {
+      console.error('Error fetching emergencies:', error);
+      setEmergencies([]);
+      if (!error.response) showToast('Cannot reach server. Check your connection.', 'error');
+      else if (error.response?.status === 403) showToast('Access denied to emergencies.', 'error');
+    } finally {
+      setIsLoadingEmergencies(false);
+    }
+  }, [showToast]);
+
+  const fetchAmbulances = useCallback(async () => {
+    try {
+      // Bug 7 Fix: returns merged array with lat/lon/speed
+      const fleet = await ambulanceApi.getFleet();
+      const fleetMap = {};
+      fleet.forEach(a => { fleetMap[a.id] = a; });
+      setAmbulances(fleetMap);
+    } catch (error) {
+      console.error('Error fetching ambulances:', error);
+      setAmbulances({});
+    } finally {
+      setIsLoadingAmbulances(false);
+      setIsLoadingMap(false);
+    }
+  }, []);
+
+  // ── Emergency creation ────────────────────────────────────────────────────
+
+  const handleCreateEmergency = async (latitude, longitude, priority) => {
+    try {
+      const newEmergency = await emergencyApi.create({ latitude, longitude, priority });
+      setEmergencies(prev => [...prev, newEmergency]);
+      showToast(`Emergency ${newEmergency.id} created`, 'success');
+      return newEmergency;
+    } catch (error) {
+      console.error('Error creating emergency:', error);
+      const msg = error.response?.status === 400
+        ? 'Invalid emergency data.'
+        : error.response?.status === 403
+          ? 'Access denied: cannot create emergencies.'
+          : 'Failed to create emergency.';
+      showToast(msg, 'error');
+      throw error;
+    }
+  };
+
+  // ── WebSocket for live ambulance locations ────────────────────────────────
+
+  useEffect(() => {
+    if (!accessToken) return;
+
+    let unsubLocation;
+    let reconnectTimeout;
+
+    const connectWS = async () => {
+      try {
+        setWsConnectionState('connecting');
+        await wsService.connect(accessToken);
+        setWsConnectionState('connected');
+
+        // Bug 2 Fix: only /topic/location exists on backend
+        unsubLocation = wsService.subscribe('/topic/location', (update) => {
+          // update shape: { ambulanceId, latitude, longitude, speed, heading, timestamp }
+          setAmbulances(prev => {
+            const existing = prev[update.ambulanceId] || {};
+            return {
+              ...prev,
+              [update.ambulanceId]: {
+                ...existing,
+                id: update.ambulanceId,
+                latitude: update.latitude,
+                longitude: update.longitude,
+                speed: update.speed ?? existing.speed ?? 0,
+                heading: update.heading ?? existing.heading ?? 0,
+              },
+            };
+          });
+        });
+      } catch (error) {
+        console.error('WS connection failed:', error);
+        setWsConnectionState('error');
+        showToast('Real-time location updates unavailable.', 'warning');
+        reconnectTimeout = setTimeout(() => {
+          if (accessToken) connectWS();
+        }, 5000);
+      }
+    };
+
+    connectWS();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (unsubLocation) unsubLocation();
+      wsService.disconnect();
+      setWsConnectionState('disconnected');
+    };
+  }, [accessToken, showToast]);
+
+  // ── Poll emergencies every 15s for status changes ─────────────────────────
+  // (replaces non-existent /topic/emergencies WebSocket topic)
+
+  useEffect(() => {
+    fetchEmergencies();
+    fetchAmbulances();
+
+    pollIntervalRef.current = setInterval(fetchEmergencies, 15000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [fetchEmergencies, fetchAmbulances]);
+
+  const ambulanceArray = Object.values(ambulances);
+
+  return (
+    <div className="dispatcher-dashboard">
+      <header className="dashboard-header">
+        <h1>Dispatcher Dashboard</h1>
+        <div className="header-actions">
+          <span className="user-info">Welcome, {user?.username}</span>
+          <ConnectionStatus status={wsConnectionState} />
+          <button onClick={logout} className="logout-button">Logout</button>
+        </div>
+      </header>
+
+      <main className="dashboard-content">
+        {/* Map panel — 60% */}
+        <div className="map-panel">
+          {isLoadingMap ? (
+            <SkeletonLoader type="map" />
+          ) : (
+            <>
+              <MapComponent
+                center={[18.5204, 73.8567]}
+                zoom={13}
+                onMapClick={mapClickMode ? (lat, lng) => {
+                  if (window.emergencyCreationControl?.handleLocationSelect) {
+                    window.emergencyCreationControl.handleLocationSelect(lat, lng);
+                  }
+                } : undefined}
+              >
+                {emergencies.map(emergency => (
+                  <EmergencyMarker
+                    key={emergency.id}
+                    emergency={emergency}
+                    onClick={() => { setSelectedEmergency(emergency); setSelectedAmbulance(null); }}
+                  />
+                ))}
+                {ambulanceArray
+                  .filter(a => a.latitude && a.longitude)
+                  .map(ambulance => (
+                    <AmbulanceMarker
+                      key={ambulance.id}
+                      ambulance={ambulance}
+                      onClick={() => { setSelectedAmbulance(ambulance); setSelectedEmergency(null); }}
+                    />
+                  ))}
+              </MapComponent>
+
+              <EmergencyCreationControl
+                onEmergencyCreated={(e) => setEmergencies(prev => [...prev, e])}
+                onModeChange={setMapClickMode}
+                showToast={showToast}
+              />
+            </>
+          )}
+        </div>
+
+        {/* Side panel — 40% */}
+        <div className="side-panel">
+          {isLoadingEmergencies ? (
+            <SkeletonLoader type="card" count={3} />
+          ) : (
+            <EmergencyQueuePanel
+              emergencies={emergencies}
+              onEmergencyClick={(e) => { setSelectedEmergency(e); setSelectedAmbulance(null); }}
+            />
+          )}
+
+          {isLoadingAmbulances ? (
+            <SkeletonLoader type="table" count={5} />
+          ) : (
+            <FleetStatusPanel ambulances={ambulanceArray} />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default DispatcherDashboard;
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { emergencyApi, ambulanceApi } from '../services/api';
+import { wsService } from '../services/websocketService';
+import MapComponent from '../components/map/MapComponent';
+import EmergencyMarker from '../components/map/EmergencyMarker';
+import AmbulanceMarker from '../components/map/AmbulanceMarker';
+import EmergencyQueuePanel from '../components/EmergencyQueuePanel';
+import FleetStatusPanel from '../components/FleetStatusPanel';
+import EmergencyCreationControl from '../components/EmergencyCreationControl';
+import FleetManagementPanel from '../components/FleetManagementPanel';
+import SystemHealthPanel from '../components/SystemHealthPanel';
+import SkeletonLoader from '../components/SkeletonLoader';
+import ConnectionStatus from '../components/ConnectionStatus';
+import { useToast } from '../contexts/ToastContext';
+import './DispatcherDashboard.css';
+
+/**
+ * AdminDashboard — inherits all dispatcher features + admin panels.
+ *
+ * Bug 2 Fix: Only subscribes to /topic/location.
+ * Bug 7 Fix: ambulanceApi.getFleet() returns merged array.
+ */
+const AdminDashboard = () => {
+  const { user, logout, accessToken } = useAuth();
+  const { showToast } = useToast();
+
+  const [emergencies, setEmergencies] = useState([]);
+  const [ambulances, setAmbulances] = useState({});
+  const [isLoadingEmergencies, setIsLoadingEmergencies] = useState(true);
+  const [isLoadingAmbulances, setIsLoadingAmbulances] = useState(true);
+  const [isLoadingMap, setIsLoadingMap] = useState(true);
+  const [wsConnectionState, setWsConnectionState] = useState('disconnected');
+  const [mapClickMode, setMapClickMode] = useState(false);
+
+  const pollIntervalRef = useRef(null);
+
+  const fetchEmergencies = useCallback(async () => {
+    try {
+      const [pending, assigned] = await Promise.all([
+        emergencyApi.getByStatus('PENDING'),
+        emergencyApi.getByStatus('ASSIGNED'),
+      ]);
+      setEmergencies([...pending, ...assigned]);
+    } catch (error) {
+      console.error('Error fetching emergencies:', error);
+      setEmergencies([]);
+    } finally {
+      setIsLoadingEmergencies(false);
+    }
+  }, []);
+
+  const fetchAmbulances = useCallback(async () => {
+    try {
+      const fleet = await ambulanceApi.getFleet();
+      const fleetMap = {};
+      fleet.forEach(a => { fleetMap[a.id] = a; });
+      setAmbulances(fleetMap);
+    } catch (error) {
+      console.error('Error fetching ambulances:', error);
+      setAmbulances({});
+    } finally {
+      setIsLoadingAmbulances(false);
+      setIsLoadingMap(false);
+    }
+  }, []);
+
+  const handleCreateEmergency = async (latitude, longitude, priority) => {
+    try {
+      const newEmergency = await emergencyApi.create({ latitude, longitude, priority });
+      setEmergencies(prev => [...prev, newEmergency]);
+      showToast(`Emergency ${newEmergency.id} created`, 'success');
+      return newEmergency;
+    } catch (error) {
+      showToast('Failed to create emergency.', 'error');
+      throw error;
+    }
+  };
+
+  // WebSocket — live ambulance locations only
+  useEffect(() => {
+    if (!accessToken) return;
+    let unsubLocation;
+    let reconnectTimeout;
+
+    const connectWS = async () => {
+      try {
+        setWsConnectionState('connecting');
+        await wsService.connect(accessToken);
+        setWsConnectionState('connected');
+
+        // Bug 2 Fix: /topic/location only
+        unsubLocation = wsService.subscribe('/topic/location', (update) => {
+          setAmbulances(prev => {
+            const existing = prev[update.ambulanceId] || {};
+            return {
+              ...prev,
+              [update.ambulanceId]: {
+                ...existing,
+                id: update.ambulanceId,
+                latitude: update.latitude,
+                longitude: update.longitude,
+                speed: update.speed ?? existing.speed ?? 0,
+                heading: update.heading ?? existing.heading ?? 0,
+              },
+            };
+          });
+        });
+      } catch (error) {
+        console.error('WS error:', error);
+        setWsConnectionState('error');
+        reconnectTimeout = setTimeout(() => { if (accessToken) connectWS(); }, 5000);
+      }
+    };
+
+    connectWS();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (unsubLocation) unsubLocation();
+      wsService.disconnect();
+      setWsConnectionState('disconnected');
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    fetchEmergencies();
+    fetchAmbulances();
+    pollIntervalRef.current = setInterval(fetchEmergencies, 15000);
+    return () => clearInterval(pollIntervalRef.current);
+  }, [fetchEmergencies, fetchAmbulances]);
+
+  const ambulanceArray = Object.values(ambulances);
+
+  return (
+    <div className="dispatcher-dashboard">
+      <header className="dashboard-header">
+        <h1>Admin Dashboard</h1>
+        <div className="header-actions">
+          <span className="user-info">Welcome, {user?.username}</span>
+          <ConnectionStatus status={wsConnectionState} />
+          <button onClick={logout} className="logout-button">Logout</button>
+        </div>
+      </header>
+
+      <main className="dashboard-content">
+        <div className="map-panel">
+          {isLoadingMap ? (
+            <SkeletonLoader type="map" />
+          ) : (
+            <>
+              <MapComponent
+                center={[18.5204, 73.8567]}
+                zoom={13}
+                onMapClick={mapClickMode ? (lat, lng) => {
+                  window.emergencyCreationControl?.handleLocationSelect?.(lat, lng);
+                } : undefined}
+              >
+                {emergencies.map(emergency => (
+                  <EmergencyMarker key={emergency.id} emergency={emergency} />
+                ))}
+                {ambulanceArray
+                  .filter(a => a.latitude && a.longitude)
+                  .map(ambulance => (
+                    <AmbulanceMarker key={ambulance.id} ambulance={ambulance} />
+                  ))}
+              </MapComponent>
+              <EmergencyCreationControl
+                onEmergencyCreated={(e) => setEmergencies(prev => [...prev, e])}
+                onModeChange={setMapClickMode}
+                showToast={showToast}
+              />
+            </>
+          )}
+        </div>
+
+        <div className="side-panel">
+          {isLoadingEmergencies ? <SkeletonLoader type="card" count={3} /> : (
+            <EmergencyQueuePanel emergencies={emergencies} />
+          )}
+
+          {isLoadingAmbulances ? <SkeletonLoader type="table" count={5} /> : (
+            <FleetStatusPanel ambulances={ambulanceArray} />
+          )}
+
+          <FleetManagementPanel />
+          <SystemHealthPanel />
+
+          <div className="metrics-link-panel">
+            <h2>System Metrics</h2>
+            <p>View detailed metrics in Grafana.</p>
+            <a href="http://localhost:3001" target="_blank" rel="noopener noreferrer"
+               className="grafana-link-button">
+              Open Grafana Dashboard
+            </a>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default AdminDashboard;

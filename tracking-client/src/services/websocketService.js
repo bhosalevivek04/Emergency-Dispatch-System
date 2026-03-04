@@ -36,39 +36,35 @@ class WebSocketService {
 
     return new Promise((resolve, reject) => {
       try {
-        // Create SockJS socket factory
-        const socket = new SockJS('http://localhost:8080/ws/ws-sockjs');
+        const wsToken = encodeURIComponent(token);
 
-        // Initialize STOMP client
+        const socket = new SockJS(`http://localhost:8085/ws?token=${wsToken}`);
+
         this.client = new Client({
+          // Tracking service is configured with SockJS endpoints.
           webSocketFactory: () => socket,
-          connectHeaders: {
-            Authorization: `Bearer ${token}`,
-          },
+          connectHeaders: {},
           reconnectDelay: this.reconnectDelay,
           heartbeatIncoming: 4000,
           heartbeatOutgoing: 4000,
-          debug: (str) => {
+          debug: () => {
             // Uncomment for debugging
             // console.log('STOMP Debug:', str);
           },
         });
 
-        // Handle successful connection
-        this.client.onConnect = (frame) => {
+        this.client.onConnect = () => {
           console.log('WebSocket connected successfully');
           this.isConnecting = false;
           this.reconnectAttempts = 0;
           resolve();
         };
 
-        // Handle connection errors
         this.client.onStompError = (frame) => {
           console.error('STOMP error:', frame.headers['message']);
           this.isConnecting = false;
 
-          // Check if error is authentication-related
-          if (frame.headers['message']?.includes('401') || 
+          if (frame.headers['message']?.includes('401') ||
               frame.headers['message']?.includes('Unauthorized')) {
             console.log('WebSocket authentication failed, triggering token refresh');
             if (onTokenRefreshNeeded) {
@@ -79,20 +75,17 @@ class WebSocketService {
           reject(new Error(frame.headers['message'] || 'WebSocket connection failed'));
         };
 
-        // Handle WebSocket errors
         this.client.onWebSocketError = (error) => {
           console.error('WebSocket error:', error);
           this.isConnecting = false;
           reject(error);
         };
 
-        // Handle disconnection
         this.client.onDisconnect = () => {
           console.log('WebSocket disconnected');
           this.isConnecting = false;
         };
 
-        // Activate the client to initiate connection
         this.client.activate();
       } catch (error) {
         console.error('Error creating WebSocket connection:', error);
@@ -110,7 +103,6 @@ class WebSocketService {
       return;
     }
 
-    // Unsubscribe from all topics
     this.subscriptions.forEach((subscription) => {
       try {
         subscription.unsubscribe();
@@ -120,7 +112,6 @@ class WebSocketService {
     });
     this.subscriptions.clear();
 
-    // Deactivate the client
     try {
       this.client.deactivate();
     } catch (error) {
@@ -134,7 +125,7 @@ class WebSocketService {
 
   /**
    * Subscribe to a STOMP topic and receive messages.
-   * @param {string} topic - The topic to subscribe to (e.g., '/topic/emergencies')
+   * @param {string} topic - The topic to subscribe to (e.g., '/topic/location')
    * @param {Function} callback - Callback function to handle received messages
    * @returns {Function} Unsubscribe function to stop receiving messages
    */
@@ -143,7 +134,6 @@ class WebSocketService {
       throw new Error('WebSocket not connected. Call connect() first.');
     }
 
-    // Check if already subscribed to this topic
     if (this.subscriptions.has(topic)) {
       console.warn(`Already subscribed to topic: ${topic}`);
       return () => {
@@ -156,21 +146,19 @@ class WebSocketService {
     }
 
     try {
-      // Subscribe to the topic
       const subscription = this.client.subscribe(topic, (message) => {
         try {
           const data = JSON.parse(message.body);
           callback(data);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
-          callback(message.body); // Pass raw message if parsing fails
+          callback(message.body);
         }
       });
 
       this.subscriptions.set(topic, subscription);
       console.log(`Subscribed to topic: ${topic}`);
 
-      // Return unsubscribe function
       return () => {
         try {
           subscription.unsubscribe();
@@ -209,8 +197,5 @@ class WebSocketService {
   }
 }
 
-// Export singleton instance
 export const wsService = new WebSocketService();
-
-// Export class for testing purposes
 export { WebSocketService };

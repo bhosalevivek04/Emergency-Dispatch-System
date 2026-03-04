@@ -27,7 +27,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/actuator/health",
             "/actuator/info",
             "/ws/ws-sockjs/info",  // SockJS handshake endpoint
-            "/ws/ws-sockjs/"       // SockJS WebSocket endpoints
+            "/ws/ws-sockjs/",      // SockJS WebSocket endpoints
+            "/ws/ws"               // Native WebSocket endpoint
     );
 
     public JwtAuthenticationFilter(JwtService jwtService) {
@@ -107,3 +108,4 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         return -100; // High priority - run before other filters
     }
 }
+

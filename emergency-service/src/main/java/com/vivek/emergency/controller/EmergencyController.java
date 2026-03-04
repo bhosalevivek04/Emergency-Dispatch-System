@@ -15,6 +15,7 @@ import com.vivek.emergency.service.EmergencyService;
 import lombok.RequiredArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/emergency")
@@ -29,6 +30,18 @@ public class EmergencyController {
 		meterRegistry.counter("emergency.requests.total").increment();
 		Emergency created = emergencyService.createEmergency(event);
 		return ResponseEntity.ok(created);
+	}
+
+	@PutMapping("/{emergencyId}/status")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER', 'AMBULANCE_DRIVER')")
+	public ResponseEntity<Emergency> updateStatus(
+			@PathVariable String emergencyId,
+			@RequestBody Map<String, String> body) {
+		String status = body.get("status");
+		emergencyService.updateStatus(emergencyId, status, null);
+		return emergencyService.findByEmergencyId(emergencyId)
+				.map(ResponseEntity::ok)
+				.orElse(ResponseEntity.notFound().build());
 	}
 
 	@GetMapping("/{emergencyId}")

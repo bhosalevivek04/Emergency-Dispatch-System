@@ -72,7 +72,15 @@ export const emergencyApi = {
    * @returns {string} return.createdAt - ISO 8601 timestamp
    */
   create: (data) =>
-    apiClient.post('/api/emergencies', data).then(res => res.data),
+    apiClient.post('/api/emergencies', data).then(res => {
+      const e = res.data;
+      return {
+        ...e,
+        id: e.emergencyId || e.id,
+        latitude: Number(e.latitude || e.lat),
+        longitude: Number(e.longitude || e.lon),
+      };
+    }),
 
   /**
    * Get emergency by ID
@@ -80,7 +88,15 @@ export const emergencyApi = {
    * @returns {Promise<Object>} Emergency details
    */
   getById: (id) =>
-    apiClient.get(`/api/emergencies/${id}`).then(res => res.data),
+    apiClient.get(`/api/emergencies/${id}`).then(res => {
+      const e = res.data;
+      return {
+        ...e,
+        id: e.emergencyId || e.id,
+        latitude: Number(e.latitude || e.lat),
+        longitude: Number(e.longitude || e.lon),
+      };
+    }),
 
   /**
    * Get emergencies by status
@@ -88,7 +104,14 @@ export const emergencyApi = {
    * @returns {Promise<Array<Object>>} Array of emergencies
    */
   getByStatus: (status) =>
-    apiClient.get(`/api/emergencies/status/${status}`).then(res => res.data),
+    apiClient.get(`/api/emergencies/status/${status}`).then(res =>
+      res.data.map(e => ({
+        ...e,
+        id: e.emergencyId || e.id,
+        latitude: Number(e.latitude || e.lat),
+        longitude: Number(e.longitude || e.lon),
+      }))
+    ),
 
   /**
    * Update emergency status
@@ -120,8 +143,26 @@ export const ambulanceApi = {
    * @returns {string} [return[].assignedEmergencyId] - Assigned emergency ID
    * @returns {number} [return[].version] - Version number for optimistic locking
    */
-  getFleet: () =>
-    apiClient.get('/api/ambulances/fleet').then(res => res.data),
+  getFleet: async () => {
+    const [fleetRes, trackingRes] = await Promise.all([
+      apiClient.get('/api/ambulances/fleet'),
+      apiClient.get('/api/tracking/ambulances'),
+    ]);
+    const fleetMap = fleetRes.data.fleet || {};
+    const locationMap = trackingRes.data || {};
+    return Object.entries(fleetMap).map(([id, state]) => {
+      const loc = locationMap[id] || {};
+      return {
+        id,
+        status: state.status,
+        version: state.version,
+        latitude: loc.latitude ?? loc.lat ?? 18.5204,
+        longitude: loc.longitude ?? loc.lon ?? 73.8567,
+        speed: loc.speed ?? 0,
+        available: state.available,
+      };
+    });
+  },
 
   /**
    * Get available ambulances

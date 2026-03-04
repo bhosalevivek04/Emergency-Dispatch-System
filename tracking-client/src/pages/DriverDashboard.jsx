@@ -23,7 +23,7 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371; // Earth's radius in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
+  const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
@@ -42,6 +42,9 @@ const calculateETA = (distance, speed = 40) => {
   return Math.ceil((distance / effectiveSpeed) * 60);
 };
 
+const SIMULATION_TICK_SECONDS = 5;
+const ARRIVAL_SNAP_DISTANCE_KM = 0.03; // 30 meters
+
 /**
  * DriverDashboard component
  * Mobile-first dashboard for ambulance drivers showing active mission, map, and status controls
@@ -49,7 +52,7 @@ const calculateETA = (distance, speed = 40) => {
 const DriverDashboard = () => {
   const { user, logout, accessToken } = useAuth();
   const { showToast } = useToast();
-  
+
   // State
   const [ambulanceId, setAmbulanceId] = useState(null);
   const [currentMission, setCurrentMission] = useState(null);
@@ -60,39 +63,34 @@ const DriverDashboard = () => {
   const [locationTracking, setLocationTracking] = useState(false);
   const [useSimulation, setUseSimulation] = useState(true);
   const [wsConnectionState, setWsConnectionState] = useState('disconnected');
-  
+
   // Refs
   const locationIntervalRef = useRef(null);
   const wsUnsubscribeRef = useRef(null);
 
-  // Extract ambulance ID from username (assuming format like "driver1", "driver2", etc.)
+  // Ambulance ID is supplied by the auth response; fall back to a safe default
   useEffect(() => {
-    if (user?.username) {
-      // Try to extract ambulance ID from username
-      const match = user.username.match(/driver(\d+)/i);
-      if (match) {
-        setAmbulanceId(`AMB-${match[1].padStart(3, '0')}`);
-      } else {
-        // Default to AMB-001 if pattern doesn't match
-        setAmbulanceId('AMB-001');
-      }
+    if (user?.ambulanceId) {
+      setAmbulanceId(user.ambulanceId);
+    } else {
+      setAmbulanceId('AMB-001');
     }
   }, [user]);
 
   // Fetch ambulance data and current mission
   const fetchAmbulanceData = useCallback(async () => {
     if (!ambulanceId) return;
-    
+
     try {
       const ambulance = await ambulanceApi.getById(ambulanceId);
       setAmbulanceData(ambulance);
-      
+
       // Update current location from ambulance data
       setCurrentLocation({
         latitude: ambulance.latitude,
         longitude: ambulance.longitude,
       });
-      
+
       // Fetch mission if ambulance is assigned
       if (ambulance.assignedEmergencyId) {
         const emergency = await emergencyApi.getById(ambulance.assignedEmergencyId);
@@ -124,7 +122,7 @@ const DriverDashboard = () => {
         setWsConnectionState('connecting');
         await wsService.connect(accessToken);
         setWsConnectionState('connected');
-        
+
         // Subscribe to driver mission updates
         const unsubscribe = wsService.subscribe(
           `/topic/driver/${ambulanceId}/mission`,
@@ -133,7 +131,7 @@ const DriverDashboard = () => {
             setCurrentMission(data);
           }
         );
-        
+
         wsUnsubscribeRef.current = unsubscribe;
       } catch (error) {
         console.error('WebSocket connection failed:', error);
@@ -161,7 +159,9 @@ const DriverDashboard = () => {
           ambulanceId,
           latitude: lat,
           longitude: lng,
-          timestamp: new Date().toISOString(),
+          speed: ambulanceData?.speed ?? 40,
+          heading: ambulanceData?.heading ?? 0,
+          timestamp: Date.now(),
         });
       } catch (error) {
         console.error('Error sending location update:', error);
@@ -173,14 +173,33 @@ const DriverDashboard = () => {
       locationIntervalRef.current = setInterval(() => {
         if (currentMission) {
           setCurrentLocation(prev => {
-            // Move slightly towards emergency
-            const dx = (currentMission.latitude - prev.latitude) * 0.1;
-            const dy = (currentMission.longitude - prev.longitude) * 0.1;
-            const newLat = prev.latitude + dx;
-            const newLng = prev.longitude + dy;
-            
+            const targetLat = currentMission.latitude;
+            const targetLng = currentMission.longitude;
+            const distanceToTargetKm = calculateDistance(
+              prev.latitude,
+              prev.longitude,
+              targetLat,
+              targetLng
+            );
+
+            // Snap to exact emergency point when close enough.
+            if (distanceToTargetKm <= ARRIVAL_SNAP_DISTANCE_KM) {
+              sendLocationUpdate(targetLat, targetLng);
+              return {
+                latitude: targetLat,
+                longitude: targetLng,
+              };
+            }
+
+            // Move by speed-based step to avoid asymptotic behavior.
+            const speedKmh = ambulanceData?.speed > 0 ? ambulanceData.speed : 40;
+            const stepKm = speedKmh * (SIMULATION_TICK_SECONDS / 3600);
+            const fraction = Math.min(1, stepKm / distanceToTargetKm);
+            const newLat = prev.latitude + (targetLat - prev.latitude) * fraction;
+            const newLng = prev.longitude + (targetLng - prev.longitude) * fraction;
+
             sendLocationUpdate(newLat, newLng);
-            
+
             return {
               latitude: newLat,
               longitude: newLng,
@@ -207,7 +226,7 @@ const DriverDashboard = () => {
             maximumAge: 0,
           }
         );
-        
+
         locationIntervalRef.current = watchId;
       }
     }
@@ -221,7 +240,7 @@ const DriverDashboard = () => {
         }
       }
     };
-  }, [ambulanceId, locationTracking, currentMission, useSimulation, showToast]);
+  }, [ambulanceId, locationTracking, currentMission, useSimulation, showToast, ambulanceData]);
 
   // Auto-start location tracking when mission is active
   useEffect(() => {
@@ -235,12 +254,28 @@ const DriverDashboard = () => {
   // Handle status update
   const handleStatusUpdate = async (newStatus) => {
     if (!currentMission) return;
-    
+
     setIsUpdatingStatus(true);
     try {
+      if (newStatus === 'ARRIVED') {
+        // Ensure backend and all dashboards see exact arrival coordinates.
+        await trackingApi.updateLocation({
+          ambulanceId,
+          latitude: currentMission.latitude,
+          longitude: currentMission.longitude,
+          speed: 0,
+          heading: ambulanceData?.heading ?? 0,
+          timestamp: Date.now(),
+        });
+        setCurrentLocation({
+          latitude: currentMission.latitude,
+          longitude: currentMission.longitude,
+        });
+      }
+
       await emergencyApi.updateStatus(currentMission.id, newStatus);
       showToast(`Status updated to ${newStatus}`, 'success');
-      
+
       // Refresh ambulance data
       await fetchAmbulanceData();
     } catch (error) {
@@ -254,13 +289,13 @@ const DriverDashboard = () => {
   // Calculate distance and ETA
   const distance = currentMission
     ? calculateDistance(
-        currentLocation.latitude,
-        currentLocation.longitude,
-        currentMission.latitude,
-        currentMission.longitude
-      )
+      currentLocation.latitude,
+      currentLocation.longitude,
+      currentMission.latitude,
+      currentMission.longitude
+    )
     : 0;
-  
+
   const eta = currentMission ? calculateETA(distance, ambulanceData?.speed) : 0;
 
   if (isLoading) {
@@ -299,7 +334,7 @@ const DriverDashboard = () => {
                   {currentMission.priority}
                 </span>
               </div>
-              
+
               <div className="mission-details">
                 <div className="mission-detail-item">
                   <span className="detail-label">Emergency ID:</span>
@@ -329,12 +364,12 @@ const DriverDashboard = () => {
               >
                 <EmergencyMarker emergency={currentMission} />
                 {ambulanceData && (
-                  <AmbulanceMarker 
+                  <AmbulanceMarker
                     ambulance={{
                       ...ambulanceData,
                       latitude: currentLocation.latitude,
                       longitude: currentLocation.longitude,
-                    }} 
+                    }}
                   />
                 )}
                 <RoutePolyline

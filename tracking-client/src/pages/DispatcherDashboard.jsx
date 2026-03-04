@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { emergencyApi, ambulanceApi } from '../services/api';
 import { wsService } from '../services/websocketService';
@@ -27,12 +27,12 @@ const DispatcherDashboard = () => {
   // State for emergencies and ambulances
   const [emergencies, setEmergencies] = useState([]);
   const [ambulances, setAmbulances] = useState([]);
-  
+
   // Loading states
   const [isLoadingEmergencies, setIsLoadingEmergencies] = useState(true);
   const [isLoadingAmbulances, setIsLoadingAmbulances] = useState(true);
   const [isLoadingMap, setIsLoadingMap] = useState(true);
-  
+
   // WebSocket connection state
   const [wsConnected, setWsConnected] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('disconnected'); // 'connected', 'connecting', 'disconnected', 'error'
@@ -40,6 +40,10 @@ const DispatcherDashboard = () => {
   // Selected items for highlighting
   const [selectedEmergency, setSelectedEmergency] = useState(null);
   const [selectedAmbulance, setSelectedAmbulance] = useState(null);
+  const [mapClickMode, setMapClickMode] = useState(false);
+  const emergencyPollRef = useRef(null);
+  const fleetPollRef = useRef(null);
+  const locationHandlerRef = useRef(null);
 
   /**
    * Fetch initial emergency data
@@ -60,7 +64,7 @@ const DispatcherDashboard = () => {
       console.error('Error fetching emergencies:', error);
       // Set empty array on error
       setEmergencies([]);
-      
+
       // Provide specific error messages based on error type
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         showToast('Request timeout while loading emergencies. Please check your connection.', 'error');
@@ -81,9 +85,11 @@ const DispatcherDashboard = () => {
   /**
    * Fetch initial ambulance data
    */
-  const fetchAmbulances = useCallback(async () => {
+  const fetchAmbulances = useCallback(async (silent = false) => {
     try {
-      setIsLoadingAmbulances(true);
+      if (!silent) {
+        setIsLoadingAmbulances(true);
+      }
       const fleet = await ambulanceApi.getFleet();
       // Ensure fleet is an array
       setAmbulances(Array.isArray(fleet) ? fleet : []);
@@ -91,7 +97,7 @@ const DispatcherDashboard = () => {
       console.error('Error fetching ambulances:', error);
       // Set empty array on error
       setAmbulances([]);
-      
+
       // Provide specific error messages based on error type
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         showToast('Request timeout while loading fleet. Please check your connection.', 'error');
@@ -105,48 +111,12 @@ const DispatcherDashboard = () => {
         showToast('Failed to load ambulance fleet. Please try again.', 'error');
       }
     } finally {
-      setIsLoadingAmbulances(false);
-      setIsLoadingMap(false); // Map can render once we have ambulance data
+      if (!silent) {
+        setIsLoadingAmbulances(false);
+        setIsLoadingMap(false); // Map can render once we have ambulance data
+      }
     }
   }, [showToast]);
-
-  /**
-   * Handle emergency creation
-   */
-  const handleCreateEmergency = async (latitude, longitude, priority) => {
-    try {
-      const newEmergency = await emergencyApi.create({
-        latitude,
-        longitude,
-        priority,
-      });
-      
-      // Add to local state immediately for optimistic UI update
-      setEmergencies(prev => [...prev, newEmergency]);
-      
-      showToast(`Emergency ${newEmergency.id} created successfully`, 'success');
-      return newEmergency;
-    } catch (error) {
-      console.error('Error creating emergency:', error);
-      
-      // Provide specific error messages based on error type
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        showToast('Request timeout while creating emergency. Please try again.', 'error');
-      } else if (error.code === 'ERR_NETWORK' || !error.response) {
-        showToast('Network error: Unable to create emergency. Please check your connection.', 'error');
-      } else if (error.response?.status === 400) {
-        showToast('Invalid emergency data. Please check the location and priority.', 'error');
-      } else if (error.response?.status === 403) {
-        showToast('Access denied: You do not have permission to create emergencies.', 'error');
-      } else if (error.response?.status >= 500) {
-        showToast('Server error while creating emergency. Please try again later.', 'error');
-      } else {
-        showToast('Failed to create emergency. Please try again.', 'error');
-      }
-      
-      throw error;
-    }
-  };
 
   /**
    * Handle emergency marker click
@@ -170,55 +140,33 @@ const DispatcherDashboard = () => {
   useEffect(() => {
     if (!accessToken) return;
 
-    let unsubEmergencies;
     let unsubLocations;
-    let unsubStatus;
     let reconnectTimeout;
 
     const connectWebSocket = async () => {
       try {
         setWsConnectionState('connecting');
-        
+
         // Connect to WebSocket with JWT token
         await wsService.connect(accessToken);
         setWsConnected(true);
         setWsConnectionState('connected');
 
-        // Subscribe to emergency updates
-        unsubEmergencies = wsService.subscribe('/topic/emergencies', (emergency) => {
-          console.log('Received emergency update:', emergency);
-          setEmergencies(prev => {
-            const index = prev.findIndex(e => e.id === emergency.id);
-            if (index >= 0) {
-              // Update existing emergency
-              const updated = [...prev];
-              updated[index] = emergency;
-              return updated;
-            } else {
-              // Add new emergency
-              return [...prev, emergency];
-            }
-          });
-        });
-
-        // Subscribe to ambulance location updates
-        unsubLocations = wsService.subscribe('/topic/ambulances/location', (update) => {
+        // Subscribe to ambulance location updates (only real topic that exists)
+        unsubLocations = wsService.subscribe('/topic/location', (update) => {
           console.log('Received location update:', update);
           setAmbulances(prev =>
             prev.map(amb =>
               amb.id === update.ambulanceId
-                ? { ...amb, latitude: update.latitude, longitude: update.longitude }
+                ? {
+                  ...amb,
+                  latitude: update.latitude,
+                  longitude: update.longitude,
+                  speed: update.speed,
+                  heading: update.heading,
+                  status: update.status ?? amb.status
+                }
                 : amb
-            )
-          );
-        });
-
-        // Subscribe to ambulance status updates
-        unsubStatus = wsService.subscribe('/topic/ambulances/status', (ambulance) => {
-          console.log('Received status update:', ambulance);
-          setAmbulances(prev =>
-            prev.map(amb =>
-              amb.id === ambulance.id ? ambulance : amb
             )
           );
         });
@@ -228,7 +176,7 @@ const DispatcherDashboard = () => {
         console.error('WebSocket connection failed:', error);
         setWsConnected(false);
         setWsConnectionState('error');
-        
+
         // Provide specific error messages
         if (error.message?.includes('401') || error.message?.includes('Unauthorized')) {
           showToast('WebSocket authentication failed. Please log in again.', 'error');
@@ -259,9 +207,7 @@ const DispatcherDashboard = () => {
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
       }
-      if (unsubEmergencies) unsubEmergencies();
       if (unsubLocations) unsubLocations();
-      if (unsubStatus) unsubStatus();
       wsService.disconnect();
       setWsConnected(false);
       setWsConnectionState('disconnected');
@@ -273,7 +219,22 @@ const DispatcherDashboard = () => {
    */
   useEffect(() => {
     fetchEmergencies();
-    fetchAmbulances();
+    fetchAmbulances(false);
+
+    // Poll emergencies so status transitions (ON_ROUTE/ARRIVED/COMPLETED)
+    // are reflected in queue without manual refresh.
+    emergencyPollRef.current = setInterval(fetchEmergencies, 15000);
+    // Poll fleet so status transitions are reflected even if WS payload has no status field.
+    fleetPollRef.current = setInterval(() => fetchAmbulances(true), 5000);
+
+    return () => {
+      if (emergencyPollRef.current) {
+        clearInterval(emergencyPollRef.current);
+      }
+      if (fleetPollRef.current) {
+        clearInterval(fleetPollRef.current);
+      }
+    };
   }, [fetchEmergencies, fetchAmbulances]);
 
   return (
@@ -283,7 +244,7 @@ const DispatcherDashboard = () => {
         <h1>Dispatcher Dashboard</h1>
         <div className="header-actions">
           <span className="user-info">Welcome, {user?.username}</span>
-          
+
           {/* WebSocket connection status indicator */}
           <ConnectionStatus status={wsConnectionState} />
           <button onClick={logout} className="logout-button">
@@ -303,6 +264,9 @@ const DispatcherDashboard = () => {
               <MapComponent
                 center={[18.5204, 73.8567]}
                 zoom={13}
+                onMapClick={mapClickMode ? (lat, lng) => {
+                  locationHandlerRef.current?.(lat, lng);
+                } : undefined}
               >
                 {/* Render emergency markers */}
                 {emergencies.map(emergency => (
@@ -325,7 +289,12 @@ const DispatcherDashboard = () => {
 
               {/* Emergency creation control */}
               <EmergencyCreationControl
-                onCreateEmergency={handleCreateEmergency}
+                onEmergencyCreated={(e) => setEmergencies(prev => [...prev, e])}
+                onModeChange={setMapClickMode}
+                onLocationHandlerReady={(handler) => {
+                  locationHandlerRef.current = handler;
+                }}
+                showToast={showToast}
               />
             </>
           )}

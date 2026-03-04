@@ -42,6 +42,7 @@ public class AuthService {
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .roles(request.getRole())
+                .ambulanceId(request.getAmbulanceId())
                 .enabled(true)
                 .build();
 
@@ -98,6 +99,7 @@ public class AuthService {
                 .expiresIn(jwtService.getExpirationTime())
                 .username(user.getUsername())
                 .roles(user.getRoles())
+                .ambulanceId(user.getAmbulanceId())
                 .build();
     }
 
@@ -127,6 +129,7 @@ public class AuthService {
                 .expiresIn(jwtService.getExpirationTime())
                 .username(user.getUsername())
                 .roles(user.getRoles())
+                .ambulanceId(user.getAmbulanceId())
                 .build();
     }
 

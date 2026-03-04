@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { emergencyApi } from '../services/api';
 import './EmergencyCreationControl.css';
@@ -10,7 +10,7 @@ import './EmergencyCreationControl.css';
  * 
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5
  */
-const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, showToast }) => {
+const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, onLocationHandlerReady, showToast }) => {
   const [isCreationMode, setIsCreationMode] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [priority, setPriority] = useState('MEDIUM');
@@ -34,12 +34,12 @@ const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, showToast 
    * Handle map click to set emergency location
    * This should be called from the parent component when the map is clicked
    */
-  const handleLocationSelect = (lat, lng) => {
+  const handleLocationSelect = useCallback((lat, lng) => {
     if (isCreationMode) {
       setSelectedLocation({ lat, lng });
       setError(null);
     }
-  };
+  }, [isCreationMode]);
 
   /**
    * Submit emergency creation request
@@ -105,14 +105,14 @@ const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, showToast 
     }
   };
 
-  // Expose handleLocationSelect to parent via ref or callback
-  // For now, we'll use a pattern where parent calls this through props
-  if (typeof window !== 'undefined') {
-    window.emergencyCreationControl = {
-      handleLocationSelect,
-      isCreationMode,
-    };
-  }
+  // Register map location handler with parent dashboard.
+  useEffect(() => {
+    if (onLocationHandlerReady) {
+      onLocationHandlerReady(handleLocationSelect);
+      return () => onLocationHandlerReady(null);
+    }
+    return undefined;
+  }, [onLocationHandlerReady, handleLocationSelect]);
 
   return (
     <>
@@ -226,6 +226,7 @@ const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, showToast 
 EmergencyCreationControl.propTypes = {
   onEmergencyCreated: PropTypes.func.isRequired,
   onModeChange: PropTypes.func,
+  onLocationHandlerReady: PropTypes.func,
   showToast: PropTypes.func,
 };
 

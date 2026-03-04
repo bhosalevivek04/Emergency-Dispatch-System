@@ -15,19 +15,17 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 	public void registerStompEndpoints(StompEndpointRegistry registry) {
 		// Native WebSocket endpoint with SockJS
 		registry.addEndpoint("/ws")
-			.setAllowedOriginPatterns("*")  // Allow all origins for development
-			// Temporarily remove auth interceptor for testing
-			// .addInterceptors(new WebSocketAuthInterceptor())
-			.withSockJS()
-			.setSessionCookieNeeded(false);
-		
+				.setAllowedOriginPatterns("*") // Allow all origins for development
+				.addInterceptors(new WebSocketAuthInterceptor())
+				.withSockJS()
+				.setSessionCookieNeeded(false);
+
 		// SockJS fallback endpoint
 		registry.addEndpoint("/ws-sockjs")
-			.setAllowedOriginPatterns("*")  // Allow all origins for development
-			// Temporarily remove auth interceptor for testing
-			// .addInterceptors(new WebSocketAuthInterceptor())
-			.withSockJS()
-			.setSessionCookieNeeded(false);
+				.setAllowedOriginPatterns("*") // Allow all origins for development
+				.addInterceptors(new WebSocketAuthInterceptor())
+				.withSockJS()
+				.setSessionCookieNeeded(false);
 	}
 
 	@Override

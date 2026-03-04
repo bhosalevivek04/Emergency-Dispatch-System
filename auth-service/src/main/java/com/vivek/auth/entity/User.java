@@ -32,6 +32,10 @@ public class User {
     @Column(nullable = false)
     private String roles; // Comma-separated: ADMIN,DISPATCHER
 
+    // Optional ambulance assignment for drivers
+    @Column(name = "ambulance_id", length = 50)
+    private String ambulanceId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean enabled = true;

@@ -23,7 +23,12 @@ public class RegisterRequest {
     private String password;
 
     @NotBlank(message = "Role is required")
-    @Pattern(regexp = "^(ADMIN|DISPATCHER|AMBULANCE_DRIVER)$", 
-             message = "Role must be ADMIN, DISPATCHER, or AMBULANCE_DRIVER")
+    @Pattern(regexp = "^(ADMIN|DISPATCHER|AMBULANCE_DRIVER)$", message = "Role must be ADMIN, DISPATCHER, or AMBULANCE_DRIVER")
     private String role;
+
+    /**
+     * For ambulance drivers we can optionally set which ambulance they will
+     * operate. This value is returned to the client upon login.
+     */
+    private String ambulanceId;
 }

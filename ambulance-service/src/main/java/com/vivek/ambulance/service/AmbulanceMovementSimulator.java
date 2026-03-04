@@ -41,19 +41,25 @@ public class AmbulanceMovementSimulator {
 	
 	// Store route duration (in seconds) for each ambulance
 	private final Map<String, Double> routeDurations = new ConcurrentHashMap<>();
+
+	// Per-ambulance movement speed (degrees per simulation tick) aligned to ETA.
+	private final Map<String, Double> movementSpeeds = new ConcurrentHashMap<>();
 	
 	// Track last broadcast time for each ambulance
 	private final Map<String, Long> lastBroadcastTime = new ConcurrentHashMap<>();
 
 	// Movement speed: ~0.00002 degrees per update (~2 meters per second for realistic visualization)
 	// At 1 second update rate, this gives ~7.2 km/h walking speed for demo purposes
-	private static final double MOVEMENT_SPEED = 0.00002;
+	private static final double DEFAULT_MOVEMENT_SPEED = 0.00002;
 	
 	// Broadcast interval for moving ambulances (3 seconds)
 	private static final long MOVING_BROADCAST_INTERVAL = 3000;
 	
 	// Broadcast interval for stationary ambulances (10 seconds)
 	private static final long STATIONARY_BROADCAST_INTERVAL = 10000;
+	private static final double MIN_MOVEMENT_SPEED = 0.000005;
+	private static final double MAX_MOVEMENT_SPEED = 0.001;
+	private static final double DESTINATION_TOLERANCE_DEGREES = 0.00005;
 
 	// Initial ambulance positions (Pune area) - will be initialized from config
 	private static final double[][] INITIAL_POSITIONS = {
@@ -156,6 +162,7 @@ public class AmbulanceMovementSimulator {
 	 */
 	private void moveAlongRoute(String ambulanceId, Location current, List<double[]> waypoints) {
 		Integer waypointIdx = currentWaypointIndex.getOrDefault(ambulanceId, 0);
+		double movementSpeed = movementSpeeds.getOrDefault(ambulanceId, DEFAULT_MOVEMENT_SPEED);
 		
 		if (waypointIdx >= waypoints.size()) {
 			// Reached end of route
@@ -178,9 +185,9 @@ public class AmbulanceMovementSimulator {
 		double lonDiff = targetLon - current.lon;
 		double distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff);
 		
-		if (distance > MOVEMENT_SPEED) {
+		if (distance > movementSpeed) {
 			// Move towards current waypoint
-			double ratio = MOVEMENT_SPEED / distance;
+			double ratio = movementSpeed / distance;
 			current.lat += latDiff * ratio;
 			current.lon += lonDiff * ratio;
 			
@@ -218,13 +225,14 @@ public class AmbulanceMovementSimulator {
 	 * Fallback: Move in straight line (when OSRM unavailable)
 	 */
 	private void moveStraightLine(String ambulanceId, Location current, Location destination) {
+		double movementSpeed = movementSpeeds.getOrDefault(ambulanceId, DEFAULT_MOVEMENT_SPEED);
 		double latDiff = destination.lat - current.lat;
 		double lonDiff = destination.lon - current.lon;
 		double distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff);
 
-		if (distance > MOVEMENT_SPEED) {
+		if (distance > movementSpeed) {
 			// Move towards destination
-			double ratio = MOVEMENT_SPEED / distance;
+			double ratio = movementSpeed / distance;
 			current.lat += latDiff * ratio;
 			current.lon += lonDiff * ratio;
 
@@ -318,6 +326,10 @@ public class AmbulanceMovementSimulator {
 				routeWaypoints.put(ambulanceId, routeInfo.waypoints);
 				currentWaypointIndex.put(ambulanceId, 0);
 				routeDurations.put(ambulanceId, routeInfo.durationSeconds);
+
+				double routeLengthDegrees = calculateRouteLengthDegrees(routeInfo.waypoints);
+				double speedPerTick = routeLengthDegrees / Math.max(routeInfo.durationSeconds, 1.0);
+				movementSpeeds.put(ambulanceId, clampSpeed(speedPerTick));
 				
 				log.info("Set destination for {} to ({}, {}) with {} waypoints from OSRM, ETA: {} minutes", 
 					ambulanceId, lat, lon, routeInfo.waypoints.size(), routeInfo.durationSeconds / 60.0);
@@ -346,6 +358,8 @@ public class AmbulanceMovementSimulator {
 				double estimatedSeconds = (distanceMeters / 1000.0) / 40.0 * 3600.0 * 1.3;
 				
 				routeDurations.put(ambulanceId, estimatedSeconds);
+				double speedPerTick = straightLineDistance / Math.max(estimatedSeconds, 1.0);
+				movementSpeeds.put(ambulanceId, clampSpeed(speedPerTick));
 				
 				log.info("Set destination for {} to ({}, {}) - using straight line (OSRM unavailable), distance: {}m, estimated: {} seconds ({} minutes)", 
 					ambulanceId, lat, lon, distanceMeters, estimatedSeconds, estimatedSeconds / 60.0);
@@ -366,7 +380,30 @@ public class AmbulanceMovementSimulator {
 		routeWaypoints.remove(ambulanceId);
 		currentWaypointIndex.remove(ambulanceId);
 		routeDurations.remove(ambulanceId);
+		movementSpeeds.remove(ambulanceId);
 		log.info("Cleared destination and route for {}", ambulanceId);
+	}
+
+	private double calculateRouteLengthDegrees(List<double[]> waypoints) {
+		if (waypoints == null || waypoints.size() < 2) {
+			return 0.0;
+		}
+		double total = 0.0;
+		for (int i = 0; i < waypoints.size() - 1; i++) {
+			double[] a = waypoints.get(i);
+			double[] b = waypoints.get(i + 1);
+			double dLat = b[0] - a[0];
+			double dLon = b[1] - a[1];
+			total += Math.sqrt(dLat * dLat + dLon * dLon);
+		}
+		return total;
+	}
+
+	private double clampSpeed(double speed) {
+		if (Double.isNaN(speed) || Double.isInfinite(speed)) {
+			return DEFAULT_MOVEMENT_SPEED;
+		}
+		return Math.max(MIN_MOVEMENT_SPEED, Math.min(MAX_MOVEMENT_SPEED, speed));
 	}
 
 	/**
@@ -374,6 +411,29 @@ public class AmbulanceMovementSimulator {
 	 */
 	public Location getCurrentLocation(String ambulanceId) {
 		return currentLocations.get(ambulanceId);
+	}
+
+	/**
+	 * Returns true when the ambulance has consumed all route waypoints or is
+	 * within a small tolerance from destination.
+	 */
+	public boolean hasReachedDestination(String ambulanceId) {
+		List<double[]> waypoints = routeWaypoints.get(ambulanceId);
+		if (waypoints != null && !waypoints.isEmpty()) {
+			int currentIdx = currentWaypointIndex.getOrDefault(ambulanceId, 0);
+			return currentIdx >= waypoints.size();
+		}
+
+		Location destination = destinations.get(ambulanceId);
+		Location current = currentLocations.get(ambulanceId);
+		if (destination == null || current == null) {
+			return false;
+		}
+
+		double latDiff = destination.lat - current.lat;
+		double lonDiff = destination.lon - current.lon;
+		double distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff);
+		return distance <= DESTINATION_TOLERANCE_DEGREES;
 	}
 
 	// Inner class to store location

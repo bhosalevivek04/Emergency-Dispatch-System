@@ -30,6 +30,13 @@ public class HeaderAuthenticationFilter extends OncePerRequestFilter {
     private static final String ROLE_PREFIX = "ROLE_";
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        // WebSocket handshakes must not depend on gateway-injected headers.
+        return path.startsWith("/ws") || path.startsWith("/ws-sockjs");
+    }
+
+    @Override
     protected void doFilterInternal(
             HttpServletRequest request,
             HttpServletResponse response,
