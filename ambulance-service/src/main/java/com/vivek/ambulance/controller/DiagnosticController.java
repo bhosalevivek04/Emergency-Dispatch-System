@@ -1,6 +1,7 @@
 package com.vivek.ambulance.controller;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +21,7 @@ public class DiagnosticController {
     private final AmbulanceStateTracker stateTracker;
 
     @PostMapping("/init-fleet")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<String> initializeFleet() {
         try {
             log.info("Manual fleet initialization triggered via REST endpoint");
@@ -33,6 +35,7 @@ public class DiagnosticController {
     }
     
     @GetMapping("/fleet-status")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<String> getFleetStatus() {
         try {
             StringBuilder status = new StringBuilder();

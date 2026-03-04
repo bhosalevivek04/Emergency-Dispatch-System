@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import io.micrometer.core.instrument.MeterRegistry;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.vivek.emergency.dto.EmergencyEvent;
@@ -23,6 +24,7 @@ public class EmergencyController {
 	private final MeterRegistry meterRegistry;
 
 	@PostMapping
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER')")
 	public ResponseEntity<Emergency> createEmergency(@Valid @RequestBody EmergencyEvent event) {
 		meterRegistry.counter("emergency.requests.total").increment();
 		Emergency created = emergencyService.createEmergency(event);
@@ -30,6 +32,7 @@ public class EmergencyController {
 	}
 
 	@GetMapping("/{emergencyId}")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER', 'AMBULANCE_DRIVER')")
 	public ResponseEntity<Emergency> getEmergency(@PathVariable String emergencyId) {
 		return emergencyService.findByEmergencyId(emergencyId)
 				.map(ResponseEntity::ok)
@@ -37,11 +40,13 @@ public class EmergencyController {
 	}
 
 	@GetMapping("/status/{status}")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER')")
 	public ResponseEntity<List<Emergency>> getEmergenciesByStatus(@PathVariable String status) {
 		return ResponseEntity.ok(emergencyService.findByStatus(status));
 	}
 
 	@GetMapping("/pending")
+	@PreAuthorize("hasAnyRole('ADMIN', 'DISPATCHER')")
 	public ResponseEntity<List<Emergency>> getPendingEmergencies() {
 		return ResponseEntity.ok(emergencyService.findPendingEmergenciesByPriority());
 	}

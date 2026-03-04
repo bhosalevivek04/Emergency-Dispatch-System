@@ -1,5 +1,6 @@
 package com.vivek.tracking.config;
 
+import com.vivek.tracking.security.WebSocketAuthInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
@@ -15,12 +16,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 		// Native WebSocket endpoint with SockJS
 		registry.addEndpoint("/ws")
 			.setAllowedOriginPatterns("*")  // Allow all origins for development
+			.addInterceptors(new WebSocketAuthInterceptor())
 			.withSockJS()
 			.setSessionCookieNeeded(false);
 		
 		// SockJS fallback endpoint
 		registry.addEndpoint("/ws-sockjs")
 			.setAllowedOriginPatterns("*")  // Allow all origins for development
+			.addInterceptors(new WebSocketAuthInterceptor())
 			.withSockJS()
 			.setSessionCookieNeeded(false);
 	}

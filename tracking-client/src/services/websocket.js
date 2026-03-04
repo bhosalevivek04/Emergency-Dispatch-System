@@ -17,23 +17,49 @@ export function connectWebSocket(onMessage, onStatusChange) {
     });
 
     stompClient.onConnect = () => {
+        console.log("WebSocket connected");
         onStatusChange(true);
 
-        stompClient.subscribe("/topic/location", (message) => {
-            const location = JSON.parse(message.body);
-            onMessage(location);
-        });
+        // Wait a bit to ensure connection is fully established
+        setTimeout(() => {
+            if (stompClient && stompClient.connected) {
+                stompClient.subscribe("/topic/location", (message) => {
+                    const location = JSON.parse(message.body);
+                    onMessage(location);
+                });
+            }
+        }, 100);
     };
 
     stompClient.onDisconnect = () => {
+        console.log("WebSocket disconnected");
+        onStatusChange(false);
+    };
+
+    stompClient.onStompError = (frame) => {
+        console.error("STOMP error:", frame);
         onStatusChange(false);
     };
 
     stompClient.activate();
 }
 
+export function disconnectWebSocket() {
+    if (stompClient && stompClient.connected) {
+        stompClient.deactivate();
+    }
+}
+
 export function fetchInitialLocations() {
-    return fetch(`${TRACKING_SERVICE_URL}/tracking/ambulances`).then((res) =>
-        res.json()
-    );
+    return fetch(`${TRACKING_SERVICE_URL}/tracking/ambulances`)
+        .then((res) => {
+            if (!res.ok) {
+                throw new Error(`HTTP error! status: ${res.status}`);
+            }
+            return res.json();
+        })
+        .catch((error) => {
+            console.error("Failed to fetch initial locations:", error);
+            return {}; // Return empty object on error
+        });
 }

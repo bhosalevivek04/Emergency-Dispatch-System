@@ -2,6 +2,7 @@ package com.vivek.ambulance.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,6 +27,7 @@ public class AmbulanceController {
 	 * In production, ambulances register through a proper authentication system
 	 */
 	@PostMapping
+	@PreAuthorize("hasAnyRole('ADMIN', 'AMBULANCE_DRIVER')")
 	public ResponseEntity<String> registerAmbulance(@RequestBody AmbulanceRegistrationRequest request) {
 		log.info("Registering ambulance: {} at lat={}, lon={}", request.getAmbulanceId(),
 				request.getLatitude(), request.getLongitude());
