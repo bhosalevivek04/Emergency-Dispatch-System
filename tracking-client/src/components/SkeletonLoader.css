@@ -1,0 +1,107 @@
+.skeleton-loader {
+  width: 100%;
+}
+
+.skeleton {
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Text skeleton */
+.skeleton-text-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-text-line {
+  height: 16px;
+  width: 100%;
+}
+
+/* Card skeleton */
+.skeleton-card-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.skeleton-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+}
+
+.skeleton-card-title {
+  height: 24px;
+  width: 75%;
+}
+
+.skeleton-card-line {
+  height: 16px;
+  width: 100%;
+}
+
+.skeleton-card-line-short {
+  height: 16px;
+  width: 83%;
+}
+
+/* Table skeleton */
+.skeleton-table-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-table-row {
+  display: flex;
+  gap: 16px;
+}
+
+.skeleton-table-header {
+  height: 32px;
+  flex: 1;
+}
+
+.skeleton-table-cell {
+  height: 48px;
+  flex: 1;
+}
+
+/* Map skeleton */
+.skeleton-map {
+  width: 100%;
+  height: 384px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-map-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+}
+
+.skeleton-map-tile {
+  width: 100%;
+  height: 100%;
+}
+
+/* Pulse animation */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

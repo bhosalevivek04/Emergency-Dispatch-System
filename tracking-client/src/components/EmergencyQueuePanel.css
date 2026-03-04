@@ -1,0 +1,209 @@
+/* EmergencyQueuePanel Styles */
+
+.emergency-queue-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: white;
+}
+
+/* Panel Header */
+.emergency-queue-panel .panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 2px solid #e2e8f0;
+  background-color: #f8fafc;
+}
+
+.emergency-queue-panel .panel-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.emergency-queue-panel .emergency-count {
+  padding: 0.25rem 0.75rem;
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Emergency List */
+.emergency-queue-panel .emergency-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+/* Empty State */
+.emergency-queue-panel .empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #94a3b8;
+  font-size: 1rem;
+}
+
+.emergency-queue-panel .empty-state p {
+  margin: 0;
+}
+
+/* Emergency Card */
+.emergency-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 0.5rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid;
+  background-color: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.emergency-card:hover {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+/* Color-coding by priority - border and background */
+.emergency-card.emergency-high {
+  border-left-color: #ef4444;
+  background-color: #fef2f2;
+}
+
+.emergency-card.emergency-medium {
+  border-left-color: #f97316;
+  background-color: #fff7ed;
+}
+
+.emergency-card.emergency-low {
+  border-left-color: #3b82f6;
+  background-color: #eff6ff;
+}
+
+/* Priority Badge */
+.priority-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: fit-content;
+}
+
+.priority-badge.priority-high {
+  background-color: #ef4444;
+  color: white;
+}
+
+.priority-badge.priority-medium {
+  background-color: #f97316;
+  color: white;
+}
+
+.priority-badge.priority-low {
+  background-color: #3b82f6;
+  color: white;
+}
+
+/* Emergency Details */
+.emergency-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.emergency-details > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.emergency-details .label {
+  font-weight: 600;
+  color: #64748b;
+  min-width: 80px;
+}
+
+.emergency-details .value {
+  color: #1e293b;
+  font-weight: 500;
+}
+
+/* Status Badge */
+.status-badge {
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.status-pending {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.status-assigned {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.status-badge.status-completed {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+/* Scrollbar Styling */
+.emergency-queue-panel .emergency-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.emergency-queue-panel .emergency-list::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.emergency-queue-panel .emergency-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.emergency-queue-panel .emergency-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .emergency-queue-panel .panel-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .emergency-queue-panel .panel-header h2 {
+    font-size: 1.125rem;
+  }
+
+  .emergency-card {
+    padding: 0.75rem;
+  }
+
+  .emergency-details .label {
+    min-width: 70px;
+    font-size: 0.8rem;
+  }
+
+  .emergency-details .value {
+    font-size: 0.8rem;
+  }
+}

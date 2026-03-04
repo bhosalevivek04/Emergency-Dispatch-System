@@ -1,51 +1,72 @@
-import { useEffect, useState } from "react";
-import MapView from "./components/MapView";
-import InfoPanel from "./components/InfoPanel";
-import SimulationPanel from "./components/SimulationPanel";
-import { connectWebSocket, fetchInitialLocations } from "./services/websocket";
+import { Routes, Route, Navigate } from 'react-router-dom';
+import LoginPage from './pages/LoginPage';
+import AdminDashboard from './pages/AdminDashboard';
+import DispatcherDashboard from './pages/DispatcherDashboard';
+import DriverDashboard from './pages/DriverDashboard';
+import ProtectedRoute from './components/ProtectedRoute';
+import { useAuth } from './contexts/AuthContext';
 
 function App() {
-  const [ambulances, setAmbulances] = useState({});
-  const [connected, setConnected] = useState(false);
+  const { isAuthenticated, user } = useAuth();
 
-  useEffect(() => {
-    connectWebSocket((location) => {
-      setAmbulances(prev => ({
-        ...prev,
-        [location.ambulanceId]: location
-      }));
-    }, setConnected);
-
-    fetchInitialLocations().then(data => {
-      if (Array.isArray(data)) {
-        const ambulancesObj = {};
-        data.forEach(amb => {
-          ambulancesObj[amb.ambulanceId] = amb;
-        });
-        setAmbulances(ambulancesObj);
-      } else {
-        setAmbulances(data);
-      }
-    });
-  }, []);
-
-  const handleSimulationStart = (location) => {
-    // Merge simulation data with existing ambulance state
-    setAmbulances(prev => ({
-      ...prev,
-      [location.ambulanceId]: {
-        ...prev[location.ambulanceId],
-        ...location
-      }
-    }));
+  // Helper function to get default dashboard route based on user role
+  const getDefaultDashboard = () => {
+    if (!isAuthenticated || !user) {
+      return '/login';
+    }
+    
+    if (user.roles?.includes('ADMIN')) {
+      return '/dashboard/admin';
+    } else if (user.roles?.includes('DISPATCHER')) {
+      return '/dashboard/dispatcher';
+    } else if (user.roles?.includes('AMBULANCE_DRIVER')) {
+      return '/dashboard/driver';
+    }
+    
+    return '/login';
   };
 
   return (
-    <>
-      <MapView ambulances={ambulances} />
-      <InfoPanel connected={connected} ambulances={ambulances} />
-      <SimulationPanel onSimulationStart={handleSimulationStart} />
-    </>
+    <Routes>
+      {/* Login route */}
+      <Route path="/login" element={<LoginPage />} />
+
+      {/* Admin dashboard - requires ADMIN role */}
+      <Route
+        path="/dashboard/admin"
+        element={
+          <ProtectedRoute requiredRoles={['ADMIN']}>
+            <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Dispatcher dashboard - requires DISPATCHER role */}
+      <Route
+        path="/dashboard/dispatcher"
+        element={
+          <ProtectedRoute requiredRoles={['DISPATCHER']}>
+            <DispatcherDashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Driver dashboard - requires AMBULANCE_DRIVER role */}
+      <Route
+        path="/dashboard/driver"
+        element={
+          <ProtectedRoute requiredRoles={['AMBULANCE_DRIVER']}>
+            <DriverDashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Default route - redirect to appropriate dashboard or login */}
+      <Route path="/" element={<Navigate to={getDefaultDashboard()} replace />} />
+
+      {/* Catch-all route - redirect to appropriate dashboard or login */}
+      <Route path="*" element={<Navigate to={getDefaultDashboard()} replace />} />
+    </Routes>
   );
 }
 
