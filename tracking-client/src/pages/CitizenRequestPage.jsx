@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleMarker, Marker, Popup } from 'react-leaflet';
+import { CircleMarker, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import MapComponent from '../components/map/MapComponent';
 import StatusTimeline from '../components/StatusTimeline';
 import ConnectionStatus from '../components/ConnectionStatus';
 import { withCorrelationHeader } from '../utils/correlation';
+import { fetchOSRMRoute } from '../services/osrm';
 import './CitizenRequestPage.css';
 
 const apiBase = 'http://localhost:8080';
@@ -26,6 +27,8 @@ const CitizenRequestPage = () => {
   const [lastStatusUpdatedAt, setLastStatusUpdatedAt] = useState(null);
   const [selectedAddress, setSelectedAddress] = useState('');
   const [isResolvingAddress, setIsResolvingAddress] = useState(false);
+  const [routeData, setRouteData] = useState(null);
+  const [isRouteLoading, setIsRouteLoading] = useState(false);
   const [error, setError] = useState('');
 
   const ambulanceIcon = useMemo(() => {
@@ -65,6 +68,7 @@ const CitizenRequestPage = () => {
     setTrackingId('');
     setIsPostSubmitView(false);
     setSelectedAddress('');
+    setRouteData(null);
     setError('');
   }, []);
 
@@ -263,6 +267,46 @@ const CitizenRequestPage = () => {
     return () => clearInterval(interval);
   }, [statusData, fetchAmbulanceLocation]);
 
+  useEffect(() => {
+    const hasAmbulance = ambulanceLocation?.lat != null && ambulanceLocation?.lng != null;
+    const hasEmergency = selectedLocation?.lat != null && selectedLocation?.lng != null;
+    if (!hasAmbulance || !hasEmergency || statusData?.status === 'COMPLETED') {
+      setRouteData(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadRoute = async () => {
+      try {
+        setIsRouteLoading(true);
+        const route = await fetchOSRMRoute(
+          ambulanceLocation.lat,
+          ambulanceLocation.lng,
+          selectedLocation.lat,
+          selectedLocation.lng
+        );
+        if (!cancelled) {
+          setRouteData(route);
+        }
+      } catch (_err) {
+        if (!cancelled) {
+          setRouteData(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsRouteLoading(false);
+        }
+      }
+    };
+
+    loadRoute();
+    const interval = setInterval(loadRoute, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [ambulanceLocation, selectedLocation, statusData?.status]);
+
   const isMovingToEmergency =
     statusData?.status === 'ASSIGNED' && Number(ambulanceLocation?.speed ?? 0) > 0.5;
   const statusLabel = isMovingToEmergency ? 'ON_ROUTE' : (statusData?.status || 'UNKNOWN');
@@ -312,6 +356,17 @@ const CitizenRequestPage = () => {
                   </div>
                 </Popup>
               </Marker>
+            )}
+            {routeData?.coordinates?.length > 1 && (
+              <Polyline
+                positions={routeData.coordinates}
+                pathOptions={{
+                  color: '#2563eb',
+                  weight: 5,
+                  opacity: 0.75,
+                  dashArray: '8 10',
+                }}
+              />
             )}
           </MapComponent>
         </section>
@@ -395,6 +450,17 @@ const CitizenRequestPage = () => {
               {ambulanceLocation && (
                 <div>
                   <strong>Ambulance Speed:</strong> {Number(ambulanceLocation.speed ?? 0).toFixed(1)} km/h
+                </div>
+              )}
+              {(isRouteLoading || routeData) && (
+                <div className="route-info-box">
+                  <div><strong>Route:</strong> {isRouteLoading && !routeData ? 'Calculating...' : 'Live path shown on map'}</div>
+                  {routeData && (
+                    <>
+                      <div><strong>Distance:</strong> {(Number(routeData.distance ?? 0) / 1000).toFixed(2)} km</div>
+                      <div><strong>Estimated Arrival:</strong> {Math.max(1, Math.round(Number(routeData.duration ?? 0) / 60))} min</div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

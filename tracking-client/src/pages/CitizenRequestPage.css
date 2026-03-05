@@ -185,6 +185,15 @@
   margin-top: 0.6rem;
 }
 
+.route-info-box {
+  margin-top: 0.55rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  color: #1e3a8a;
+}
+
 .track-row {
   margin-top: 0.5rem;
   display: grid;
