@@ -161,6 +161,11 @@
   color: #1e40af;
 }
 
+.status-badge.status-on_route {
+  background-color: #e0e7ff;
+  color: #3730a3;
+}
+
 .status-badge.status-completed {
   background-color: #d1fae5;
   color: #065f46;

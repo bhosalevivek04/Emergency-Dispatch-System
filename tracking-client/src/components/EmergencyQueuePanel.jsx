@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { EmergencyPropType } from '../utils/constants';
 import StatusTimeline from './StatusTimeline';
@@ -15,18 +15,40 @@ import './EmergencyQueuePanel.css';
  * @param {Array<Emergency>} props.emergencies - Array of all emergencies
  * @param {Function} props.onEmergencyClick - Callback when an emergency is clicked
  */
-const EmergencyQueuePanel = ({ emergencies, onEmergencyClick }) => {
+const EmergencyQueuePanel = ({ emergencies, ambulances = [], onEmergencyClick }) => {
+  const ambulanceMap = useMemo(() => {
+    const map = new Map();
+    ambulances.forEach((amb) => map.set(amb.id, amb));
+    return map;
+  }, [ambulances]);
+
+  const resolveDisplayStatus = useCallback((emergency) => {
+    if (emergency.status !== 'ASSIGNED' || !emergency.assignedAmbulanceId) {
+      return emergency.status;
+    }
+    const assignedAmbulance = ambulanceMap.get(emergency.assignedAmbulanceId);
+    const speed = Number(assignedAmbulance?.speed ?? 0);
+    return speed > 0.5 ? 'ON_ROUTE' : 'ASSIGNED';
+  }, [ambulanceMap]);
+
   // Filter and sort emergencies
   const activeEmergencies = useMemo(() => {
-    // Filter to PENDING and ASSIGNED status only
-    const filtered = emergencies.filter(
-      emergency => emergency.status === 'PENDING' || emergency.status === 'ASSIGNED'
-    );
+    // Filter to active statuses only
+    const filtered = emergencies
+      .map((emergency) => ({
+        ...emergency,
+        displayStatus: resolveDisplayStatus(emergency),
+      }))
+      .filter((emergency) =>
+        emergency.displayStatus === 'PENDING' ||
+        emergency.displayStatus === 'ASSIGNED' ||
+        emergency.displayStatus === 'ON_ROUTE'
+      );
 
     // Sort by priority: HIGH -> MEDIUM -> LOW
     const priorityOrder = { HIGH: 1, MEDIUM: 2, LOW: 3 };
     return filtered.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
-  }, [emergencies]);
+  }, [emergencies, resolveDisplayStatus]);
 
   /**
    * Calculate time since emergency was created
@@ -103,12 +125,12 @@ const EmergencyQueuePanel = ({ emergencies, onEmergencyClick }) => {
 
                 <div className="emergency-status">
                   <span className="label">Status:</span>
-                  <span className={`status-badge status-${emergency.status.toLowerCase()}`}>
-                    {emergency.status}
+                  <span className={`status-badge status-${emergency.displayStatus.toLowerCase()}`}>
+                    {emergency.displayStatus}
                   </span>
                 </div>
 
-                <StatusTimeline status={emergency.status} compact />
+                <StatusTimeline status={emergency.displayStatus} compact />
 
                 <div className="emergency-time">
                   <span className="label">Created:</span>
@@ -132,6 +154,7 @@ const EmergencyQueuePanel = ({ emergencies, onEmergencyClick }) => {
 
 EmergencyQueuePanel.propTypes = {
   emergencies: PropTypes.arrayOf(EmergencyPropType).isRequired,
+  ambulances: PropTypes.array,
   onEmergencyClick: PropTypes.func,
 };
 

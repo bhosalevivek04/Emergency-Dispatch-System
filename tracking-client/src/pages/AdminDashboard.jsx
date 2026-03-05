@@ -352,6 +352,7 @@ const AdminDashboard = () => {
           ) : (
             <EmergencyQueuePanel
               emergencies={emergencies}
+              ambulances={ambulances}
               onEmergencyClick={handleEmergencyClick}
             />
           )}

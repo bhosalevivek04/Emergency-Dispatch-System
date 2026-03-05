@@ -350,6 +350,7 @@ const DispatcherDashboard = () => {
           ) : (
             <EmergencyQueuePanel
               emergencies={emergencies}
+              ambulances={ambulances}
               onEmergencyClick={handleEmergencyClick}
             />
           )}

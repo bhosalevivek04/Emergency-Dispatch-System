@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleMarker, Marker, Popup, Polyline } from 'react-leaflet';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleMarker, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import MapComponent from '../components/map/MapComponent';
 import StatusTimeline from '../components/StatusTimeline';
@@ -9,6 +9,53 @@ import { fetchOSRMRoute } from '../services/osrm';
 import './CitizenRequestPage.css';
 
 const apiBase = 'http://localhost:8080';
+const CITIZEN_STATE_KEY = 'citizen_request_state_v1';
+
+const toRad = (deg) => (deg * Math.PI) / 180;
+const distanceMeters = (a, b) => {
+  const R = 6371000;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+const nearestIndex = (points, target) => {
+  if (!points?.length) return -1;
+  let bestIdx = 0;
+  let bestDist = Number.POSITIVE_INFINITY;
+  points.forEach((pt, idx) => {
+    const d = distanceMeters(pt, target);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = idx;
+    }
+  });
+  return bestIdx;
+};
+
+function RouteFitController({ coordinates, enabled, onDone }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!enabled || !coordinates || coordinates.length < 2) {
+      return;
+    }
+    map.fitBounds(coordinates, {
+      padding: [42, 42],
+      maxZoom: 15,
+      animate: true,
+      duration: 0.6,
+    });
+    onDone?.();
+  }, [map, coordinates, enabled, onDone]);
+
+  return null;
+}
 
 const CitizenRequestPage = () => {
   const [priority, setPriority] = useState('HIGH');
@@ -29,7 +76,65 @@ const CitizenRequestPage = () => {
   const [isResolvingAddress, setIsResolvingAddress] = useState(false);
   const [routeData, setRouteData] = useState(null);
   const [isRouteLoading, setIsRouteLoading] = useState(false);
+  const [shouldAutoFitRoute, setShouldAutoFitRoute] = useState(true);
   const [error, setError] = useState('');
+  const hasRestoredRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(CITIZEN_STATE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.priority) setPriority(saved.priority);
+      if (typeof saved.callerPhone === 'string') setCallerPhone(saved.callerPhone);
+      if (typeof saved.description === 'string') setDescription(saved.description);
+      if (saved.selectedLocation?.lat != null && saved.selectedLocation?.lng != null) {
+        setSelectedLocation(saved.selectedLocation);
+      }
+      if (saved.requestId) setRequestId(saved.requestId);
+      if (saved.trackingId) setTrackingId(saved.trackingId);
+      if (saved.statusData) setStatusData(saved.statusData);
+      if (saved.ambulanceLocation) setAmbulanceLocation(saved.ambulanceLocation);
+      if (saved.selectedAddress) setSelectedAddress(saved.selectedAddress);
+      if (saved.lastStatusUpdatedAt) setLastStatusUpdatedAt(saved.lastStatusUpdatedAt);
+      if (saved.requestId || saved.statusData?.emergencyId) {
+        setIsPostSubmitView(true);
+      }
+    } catch (_err) {
+      // Ignore corrupted local session state
+    }
+  }, []);
+
+  useEffect(() => {
+    const snapshot = {
+      priority,
+      callerPhone,
+      description,
+      selectedLocation,
+      requestId,
+      trackingId,
+      statusData,
+      ambulanceLocation,
+      selectedAddress,
+      lastStatusUpdatedAt,
+    };
+    try {
+      sessionStorage.setItem(CITIZEN_STATE_KEY, JSON.stringify(snapshot));
+    } catch (_err) {
+      // Best effort only
+    }
+  }, [
+    priority,
+    callerPhone,
+    description,
+    selectedLocation,
+    requestId,
+    trackingId,
+    statusData,
+    ambulanceLocation,
+    selectedAddress,
+    lastStatusUpdatedAt,
+  ]);
 
   const ambulanceIcon = useMemo(() => {
     const svgString = `
@@ -69,7 +174,9 @@ const CitizenRequestPage = () => {
     setIsPostSubmitView(false);
     setSelectedAddress('');
     setRouteData(null);
+    setShouldAutoFitRoute(true);
     setError('');
+    sessionStorage.removeItem(CITIZEN_STATE_KEY);
   }, []);
 
   const updateSelectedLocation = useCallback((lat, lng) => {
@@ -140,6 +247,7 @@ const CitizenRequestPage = () => {
       setTrackingId(emergencyId);
       setStatusData(data);
       setIsPostSubmitView(true);
+      setShouldAutoFitRoute(true);
       setTrackingConnectionState('connected');
       setLastStatusUpdatedAt(new Date().toISOString());
       if (data.latitude != null && data.longitude != null) {
@@ -223,6 +331,14 @@ const CitizenRequestPage = () => {
   }, [statusData, fetchStatus]);
 
   useEffect(() => {
+    if (hasRestoredRef.current) return;
+    const idToResume = requestId || statusData?.emergencyId;
+    if (!idToResume) return;
+    hasRestoredRef.current = true;
+    fetchStatus(idToResume);
+  }, [requestId, statusData?.emergencyId, fetchStatus]);
+
+  useEffect(() => {
     if (!lastStatusUpdatedAt) return;
     const staleCheckTimer = setInterval(() => {
       const ageMs = Date.now() - new Date(lastStatusUpdatedAt).getTime();
@@ -286,7 +402,24 @@ const CitizenRequestPage = () => {
           selectedLocation.lng
         );
         if (!cancelled) {
-          setRouteData(route);
+          const ambulancePoint = [ambulanceLocation.lat, ambulanceLocation.lng];
+          const emergencyPoint = [selectedLocation.lat, selectedLocation.lng];
+          const rawCoordinates = Array.isArray(route?.coordinates) ? route.coordinates : [];
+
+          let normalized = rawCoordinates;
+          const startIdx = nearestIndex(rawCoordinates, ambulancePoint);
+          const endIdx = nearestIndex(rawCoordinates, emergencyPoint);
+          if (startIdx >= 0 && endIdx >= 0) {
+            const from = Math.min(startIdx, endIdx);
+            const to = Math.max(startIdx, endIdx);
+            normalized = rawCoordinates.slice(from, to + 1);
+          }
+
+          const finalCoordinates = [ambulancePoint, ...normalized, emergencyPoint];
+          setRouteData({
+            ...route,
+            coordinates: finalCoordinates,
+          });
         }
       } catch (_err) {
         if (!cancelled) {
@@ -358,15 +491,33 @@ const CitizenRequestPage = () => {
               </Marker>
             )}
             {routeData?.coordinates?.length > 1 && (
-              <Polyline
-                positions={routeData.coordinates}
-                pathOptions={{
-                  color: '#2563eb',
-                  weight: 5,
-                  opacity: 0.75,
-                  dashArray: '8 10',
-                }}
-              />
+              <>
+                <Polyline
+                  positions={routeData.coordinates}
+                  pathOptions={{
+                    color: '#1e3a8a',
+                    weight: 8,
+                    opacity: 0.32,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+                <Polyline
+                  positions={routeData.coordinates}
+                  pathOptions={{
+                    color: '#2563eb',
+                    weight: 5,
+                    opacity: 0.95,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+                <RouteFitController
+                  coordinates={routeData.coordinates}
+                  enabled={shouldAutoFitRoute}
+                  onDone={() => setShouldAutoFitRoute(false)}
+                />
+              </>
             )}
           </MapComponent>
         </section>

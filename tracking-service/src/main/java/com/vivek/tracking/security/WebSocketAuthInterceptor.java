@@ -8,15 +8,24 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
 import jakarta.servlet.http.HttpServletRequest;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.time.Instant;
+import java.util.Base64;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class WebSocketAuthInterceptor implements HandshakeInterceptor {
 
     private static final String ROLES_HEADER = "X-User-Roles";
     private static final List<String> ALLOWED_ROLES = List.of("ADMIN", "DISPATCHER", "AMBULANCE_DRIVER");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @Override
     public boolean beforeHandshake(
@@ -64,12 +73,14 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
             if (rolesHeader != null && !rolesHeader.isBlank()) {
                 roles = Arrays.stream(rolesHeader.split(","))
                         .map(String::trim)
+                        .filter(role -> !role.isBlank())
                         .toList();
             } else if (token != null && !token.isBlank()) {
-                // TODO: Validate token and extract roles
-                // For now, allow all tokens with default roles
-                log.warn("Token validation not yet implemented; allowing connection");
-                roles = List.of("AMBULANCE_DRIVER"); // Default role for direct token connection
+                roles = extractRolesFromTokenClaims(token);
+                if (roles.isEmpty()) {
+                    log.warn("WebSocket connection rejected: Token has no roles");
+                    return false;
+                }
             } else {
                 log.warn("WebSocket connection rejected: Invalid authentication");
                 return false;
@@ -88,6 +99,48 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
         }
 
         return true;
+    }
+
+    private List<String> extractRolesFromTokenClaims(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) {
+                return Collections.emptyList();
+            }
+
+            byte[] decodedPayload = Base64.getUrlDecoder().decode(parts[1]);
+            Map<String, Object> claims = OBJECT_MAPPER.readValue(decodedPayload, new TypeReference<>() {});
+
+            Object expClaim = claims.get("exp");
+            if (expClaim instanceof Number exp) {
+                long expSeconds = exp.longValue();
+                if (Instant.now().getEpochSecond() >= expSeconds) {
+                    log.warn("WebSocket token is expired");
+                    return Collections.emptyList();
+                }
+            }
+
+            Object rolesClaim = claims.get("roles");
+            if (rolesClaim instanceof String rolesString) {
+                return Arrays.stream(rolesString.split(","))
+                        .map(String::trim)
+                        .filter(role -> !role.isBlank())
+                        .collect(Collectors.toList());
+            }
+
+            if (rolesClaim instanceof Collection<?> rolesCollection) {
+                return rolesCollection.stream()
+                        .map(String::valueOf)
+                        .map(String::trim)
+                        .filter(role -> !role.isBlank())
+                        .collect(Collectors.toList());
+            }
+
+            return Collections.emptyList();
+        } catch (Exception e) {
+            log.warn("Unable to parse WebSocket token claims: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     @Override
