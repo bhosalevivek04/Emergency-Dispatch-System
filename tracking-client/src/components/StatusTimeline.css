@@ -1,0 +1,47 @@
+.status-timeline {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.timeline-step {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+.timeline-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #d1d5db;
+  border: 1px solid #9ca3af;
+}
+
+.timeline-step.done .timeline-dot {
+  background: #16a34a;
+  border-color: #166534;
+}
+
+.timeline-step.active .timeline-dot {
+  background: #2563eb;
+  border-color: #1d4ed8;
+}
+
+.timeline-step.done .timeline-label,
+.timeline-step.active .timeline-label {
+  color: #111827;
+  font-weight: 600;
+}
+
+.status-timeline.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.status-timeline.compact .timeline-step {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}

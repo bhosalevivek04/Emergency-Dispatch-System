@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CircleMarker, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import MapComponent from '../components/map/MapComponent';
+import StatusTimeline from '../components/StatusTimeline';
+import ConnectionStatus from '../components/ConnectionStatus';
+import { withCorrelationHeader } from '../utils/correlation';
 import './CitizenRequestPage.css';
 
 const apiBase = 'http://localhost:8080';
@@ -19,6 +22,10 @@ const CitizenRequestPage = () => {
   const [isChecking, setIsChecking] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [isPostSubmitView, setIsPostSubmitView] = useState(false);
+  const [trackingConnectionState, setTrackingConnectionState] = useState('disconnected');
+  const [lastStatusUpdatedAt, setLastStatusUpdatedAt] = useState(null);
+  const [selectedAddress, setSelectedAddress] = useState('');
+  const [isResolvingAddress, setIsResolvingAddress] = useState(false);
   const [error, setError] = useState('');
 
   const ambulanceIcon = useMemo(() => {
@@ -57,13 +64,24 @@ const CitizenRequestPage = () => {
     setAmbulanceLocation(null);
     setTrackingId('');
     setIsPostSubmitView(false);
+    setSelectedAddress('');
     setError('');
   }, []);
 
-  const handleMapClick = useCallback((lat, lng) => {
-    setSelectedLocation({ lat, lng });
-    setError('');
+  const updateSelectedLocation = useCallback((lat, lng) => {
+    setSelectedLocation((prev) => {
+      if (!prev) {
+        return { lat, lng };
+      }
+      const unchanged = Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001;
+      return unchanged ? prev : { lat, lng };
+    });
   }, []);
+
+  const handleMapClick = useCallback((lat, lng) => {
+    updateSelectedLocation(lat, lng);
+    setError('');
+  }, [updateSelectedLocation]);
 
   const useCurrentLocation = () => {
     if (!navigator.geolocation) {
@@ -73,10 +91,7 @@ const CitizenRequestPage = () => {
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setSelectedLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
+        updateSelectedLocation(position.coords.latitude, position.coords.longitude);
         setError('');
         setIsLocating(false);
       },
@@ -90,6 +105,9 @@ const CitizenRequestPage = () => {
 
   const submitEmergency = async (e) => {
     e.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     if (!selectedLocation) {
       setError('Please select location on map.');
       return;
@@ -99,7 +117,7 @@ const CitizenRequestPage = () => {
     try {
       const response = await fetch(`${apiBase}/api/emergencies/public`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withCorrelationHeader({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           latitude: selectedLocation.lat,
           longitude: selectedLocation.lng,
@@ -118,8 +136,10 @@ const CitizenRequestPage = () => {
       setTrackingId(emergencyId);
       setStatusData(data);
       setIsPostSubmitView(true);
+      setTrackingConnectionState('connected');
+      setLastStatusUpdatedAt(new Date().toISOString());
       if (data.latitude != null && data.longitude != null) {
-        setSelectedLocation({ lat: data.latitude, lng: data.longitude });
+        updateSelectedLocation(data.latitude, data.longitude);
       }
     } catch (err) {
       setError(err.message || 'Failed to submit emergency');
@@ -131,23 +151,63 @@ const CitizenRequestPage = () => {
   const fetchStatus = useCallback(async (id) => {
     if (!id) return;
     setIsChecking(true);
+    setTrackingConnectionState((prev) => (prev === 'connected' ? prev : 'connecting'));
     try {
-      const response = await fetch(`${apiBase}/api/emergencies/public/${id}`);
+      const response = await fetch(`${apiBase}/api/emergencies/public/${id}`, {
+        headers: withCorrelationHeader(),
+      });
       if (!response.ok) {
         throw new Error('Request ID not found');
       }
       const data = await response.json();
       setStatusData(data);
+      setTrackingConnectionState('connected');
+      setLastStatusUpdatedAt(new Date().toISOString());
       if (data.latitude != null && data.longitude != null) {
-        setSelectedLocation({ lat: data.latitude, lng: data.longitude });
+        updateSelectedLocation(data.latitude, data.longitude);
       }
       setError('');
     } catch (err) {
+      setTrackingConnectionState('error');
       setError(err.message || 'Unable to fetch status');
     } finally {
       setIsChecking(false);
     }
-  }, []);
+  }, [updateSelectedLocation]);
+
+  useEffect(() => {
+    if (!selectedLocation) {
+      setSelectedAddress('');
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        setIsResolvingAddress(true);
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${selectedLocation.lat}&lon=${selectedLocation.lng}`;
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error('Address lookup failed');
+        }
+        const data = await response.json();
+        const address = data?.display_name || '';
+        setSelectedAddress(address);
+      } catch (_err) {
+        setSelectedAddress('');
+      } finally {
+        setIsResolvingAddress(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [selectedLocation]);
 
   useEffect(() => {
     if (!statusData?.emergencyId) return;
@@ -158,14 +218,32 @@ const CitizenRequestPage = () => {
     return () => clearInterval(interval);
   }, [statusData, fetchStatus]);
 
+  useEffect(() => {
+    if (!lastStatusUpdatedAt) return;
+    const staleCheckTimer = setInterval(() => {
+      const ageMs = Date.now() - new Date(lastStatusUpdatedAt).getTime();
+      if (ageMs > 15000) {
+        setTrackingConnectionState('error');
+      }
+    }, 5000);
+    return () => clearInterval(staleCheckTimer);
+  }, [lastStatusUpdatedAt]);
+
   const fetchAmbulanceLocation = useCallback(async (ambulanceId) => {
     if (!ambulanceId) return;
     try {
-      const response = await fetch(`${apiBase}/api/tracking/public/ambulances/${ambulanceId}`);
+      const response = await fetch(`${apiBase}/api/tracking/public/ambulances/${ambulanceId}`, {
+        headers: withCorrelationHeader(),
+      });
       if (!response.ok) return;
       const data = await response.json();
       if (data?.latitude != null && data?.longitude != null) {
-        setAmbulanceLocation({ lat: data.latitude, lng: data.longitude, id: ambulanceId });
+        setAmbulanceLocation({
+          lat: data.latitude,
+          lng: data.longitude,
+          id: ambulanceId,
+          speed: Number(data.speed ?? 0),
+        });
       }
     } catch (_err) {
       // Silent fail for transient tracking misses
@@ -185,18 +263,36 @@ const CitizenRequestPage = () => {
     return () => clearInterval(interval);
   }, [statusData, fetchAmbulanceLocation]);
 
-  const statusLabel = statusData?.status || 'UNKNOWN';
+  const isMovingToEmergency =
+    statusData?.status === 'ASSIGNED' && Number(ambulanceLocation?.speed ?? 0) > 0.5;
+  const statusLabel = isMovingToEmergency ? 'ON_ROUTE' : (statusData?.status || 'UNKNOWN');
+  const mapCenter = useMemo(
+    () => (selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [18.5204, 73.8567]),
+    [selectedLocation]
+  );
+  const mapZoom = selectedLocation ? 16 : 13;
 
   return (
     <div className="citizen-page">
       <header className="citizen-header">
         <h1>Request Emergency Help</h1>
         <p>Choose your location on map and submit request.</p>
+        {statusData?.emergencyId && (
+          <div className="citizen-connection-wrap">
+            <ConnectionStatus status={trackingConnectionState} />
+          </div>
+        )}
       </header>
 
       <main className="citizen-content">
         <section className="citizen-map-section">
-          <MapComponent center={[18.5204, 73.8567]} zoom={13} onMapClick={handleMapClick}>
+          <div className="map-hint">Tap map to mark emergency location</div>
+          <MapComponent
+            center={mapCenter}
+            zoom={mapZoom}
+            onMapClick={handleMapClick}
+            panToCenterOnChange
+          >
             {selectedLocation && (
               <CircleMarker
                 center={[selectedLocation.lat, selectedLocation.lng]}
@@ -221,6 +317,18 @@ const CitizenRequestPage = () => {
         </section>
 
         <section className="citizen-form-section">
+          {selectedLocation && (
+            <div className="selected-location-chip">
+              Selected: {selectedLocation.lat.toFixed(5)}, {selectedLocation.lng.toFixed(5)}
+            </div>
+          )}
+          {selectedLocation && (
+            <div className="selected-address-chip">
+              {isResolvingAddress
+                ? 'Resolving address...'
+                : selectedAddress || 'Address unavailable, please verify marker on map'}
+            </div>
+          )}
           {isPostSubmitView ? (
             <div className="citizen-success-box">
               <h3>Request Submitted</h3>
@@ -240,18 +348,25 @@ const CitizenRequestPage = () => {
                 {isLocating ? 'Locating...' : 'Use My Location'}
               </button>
 
-              <label>Priority</label>
-              <select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <label htmlFor="citizen-priority">Priority</label>
+              <select id="citizen-priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
                 <option value="HIGH">HIGH</option>
                 <option value="MEDIUM">MEDIUM</option>
                 <option value="LOW">LOW</option>
               </select>
 
-              <label>Phone (optional)</label>
-              <input value={callerPhone} onChange={(e) => setCallerPhone(e.target.value)} placeholder="+91..." />
+              <label htmlFor="citizen-phone">Phone (optional)</label>
+              <input
+                id="citizen-phone"
+                value={callerPhone}
+                onChange={(e) => setCallerPhone(e.target.value)}
+                placeholder="+91..."
+                autoComplete="tel"
+              />
 
-              <label>Description (optional)</label>
+              <label htmlFor="citizen-description">Description (optional)</label>
               <textarea
+                id="citizen-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
@@ -268,6 +383,7 @@ const CitizenRequestPage = () => {
             <div className="citizen-status-box">
               <strong>Request ID:</strong> {requestId}
               <div><strong>Status:</strong> {statusLabel}</div>
+              <StatusTimeline status={statusLabel} />
               {statusData?.assignedAmbulanceId && (
                 <div><strong>Ambulance:</strong> {statusData.assignedAmbulanceId}</div>
               )}
@@ -276,24 +392,35 @@ const CitizenRequestPage = () => {
                   <strong>Ambulance Location:</strong> {ambulanceLocation.lat.toFixed(4)}, {ambulanceLocation.lng.toFixed(4)}
                 </div>
               )}
+              {ambulanceLocation && (
+                <div>
+                  <strong>Ambulance Speed:</strong> {Number(ambulanceLocation.speed ?? 0).toFixed(1)} km/h
+                </div>
+              )}
             </div>
           )}
 
           <div className="citizen-track-box">
-            <label>Track Existing Request ID</label>
+            <label htmlFor="citizen-track-id">Track Existing Request ID</label>
             <div className="track-row">
               <input
+                id="citizen-track-id"
                 value={trackingId}
                 onChange={(e) => setTrackingId(e.target.value)}
                 placeholder="EMG-..."
               />
-              <button type="button" onClick={() => fetchStatus(trackingId)} disabled={isChecking}>
+              <button
+                type="button"
+                className="track-btn"
+                onClick={() => fetchStatus(trackingId)}
+                disabled={isChecking}
+              >
                 {isChecking ? 'Checking...' : 'Track'}
               </button>
             </div>
           </div>
 
-          {error && <div className="citizen-error">{error}</div>}
+          {error && <div className="citizen-error" role="alert">{error}</div>}
         </section>
       </main>
     </div>

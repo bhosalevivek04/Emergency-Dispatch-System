@@ -13,6 +13,25 @@ class WebSocketService {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.reconnectDelay = 5000;
+    this.connectionState = 'disconnected';
+    this.connectionStateListeners = new Set();
+  }
+
+  setConnectionState(state) {
+    this.connectionState = state;
+    this.connectionStateListeners.forEach((listener) => {
+      try {
+        listener(state);
+      } catch (_err) {
+        // Ignore listener errors to avoid breaking WS flow
+      }
+    });
+  }
+
+  onConnectionStateChange(listener) {
+    this.connectionStateListeners.add(listener);
+    listener(this.connectionState);
+    return () => this.connectionStateListeners.delete(listener);
   }
 
   /**
@@ -23,16 +42,15 @@ class WebSocketService {
    */
   async connect(token, onTokenRefreshNeeded = null) {
     if (this.client?.connected) {
-      console.log('WebSocket already connected');
       return Promise.resolve();
     }
 
     if (this.isConnecting) {
-      console.log('WebSocket connection already in progress');
       return Promise.resolve();
     }
 
     this.isConnecting = true;
+    this.setConnectionState('connecting');
 
     return new Promise((resolve, reject) => {
       try {
@@ -54,19 +72,18 @@ class WebSocketService {
         });
 
         this.client.onConnect = () => {
-          console.log('WebSocket connected successfully');
           this.isConnecting = false;
           this.reconnectAttempts = 0;
+          this.setConnectionState('connected');
           resolve();
         };
 
         this.client.onStompError = (frame) => {
-          console.error('STOMP error:', frame.headers['message']);
           this.isConnecting = false;
+          this.setConnectionState('error');
 
           if (frame.headers['message']?.includes('401') ||
               frame.headers['message']?.includes('Unauthorized')) {
-            console.log('WebSocket authentication failed, triggering token refresh');
             if (onTokenRefreshNeeded) {
               onTokenRefreshNeeded();
             }
@@ -76,20 +93,20 @@ class WebSocketService {
         };
 
         this.client.onWebSocketError = (error) => {
-          console.error('WebSocket error:', error);
           this.isConnecting = false;
+          this.setConnectionState('error');
           reject(error);
         };
 
         this.client.onDisconnect = () => {
-          console.log('WebSocket disconnected');
           this.isConnecting = false;
+          this.setConnectionState('disconnected');
         };
 
         this.client.activate();
       } catch (error) {
-        console.error('Error creating WebSocket connection:', error);
         this.isConnecting = false;
+        this.setConnectionState('error');
         reject(error);
       }
     });
@@ -106,21 +123,21 @@ class WebSocketService {
     this.subscriptions.forEach((subscription) => {
       try {
         subscription.unsubscribe();
-      } catch (error) {
-        console.error('Error unsubscribing:', error);
+      } catch (_error) {
+        // No-op
       }
     });
     this.subscriptions.clear();
 
     try {
       this.client.deactivate();
-    } catch (error) {
-      console.error('Error deactivating WebSocket client:', error);
+    } catch (_error) {
+      // No-op
     }
 
     this.client = null;
     this.isConnecting = false;
-    console.log('WebSocket disconnected and cleaned up');
+    this.setConnectionState('disconnected');
   }
 
   /**
@@ -135,7 +152,6 @@ class WebSocketService {
     }
 
     if (this.subscriptions.has(topic)) {
-      console.warn(`Already subscribed to topic: ${topic}`);
       return () => {
         const subscription = this.subscriptions.get(topic);
         if (subscription) {
@@ -151,25 +167,21 @@ class WebSocketService {
           const data = JSON.parse(message.body);
           callback(data);
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
           callback(message.body);
         }
       });
 
       this.subscriptions.set(topic, subscription);
-      console.log(`Subscribed to topic: ${topic}`);
 
       return () => {
         try {
           subscription.unsubscribe();
           this.subscriptions.delete(topic);
-          console.log(`Unsubscribed from topic: ${topic}`);
         } catch (error) {
-          console.error('Error unsubscribing from topic:', error);
+          // No-op
         }
       };
     } catch (error) {
-      console.error(`Error subscribing to topic ${topic}:`, error);
       throw error;
     }
   }
@@ -187,13 +199,7 @@ class WebSocketService {
    * @returns {string} Connection state: 'connected', 'connecting', or 'disconnected'
    */
   getConnectionState() {
-    if (this.client?.connected) {
-      return 'connected';
-    }
-    if (this.isConnecting) {
-      return 'connecting';
-    }
-    return 'disconnected';
+    return this.connectionState;
   }
 }
 

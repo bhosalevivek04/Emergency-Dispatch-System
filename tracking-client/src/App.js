@@ -1,12 +1,14 @@
+import { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import CitizenRequestPage from './pages/CitizenRequestPage';
-import AdminDashboard from './pages/AdminDashboard';
-import DispatcherDashboard from './pages/DispatcherDashboard';
-import DriverDashboard from './pages/DriverDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 import { useAuth } from './contexts/AuthContext';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const CitizenRequestPage = lazy(() => import('./pages/CitizenRequestPage'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const DispatcherDashboard = lazy(() => import('./pages/DispatcherDashboard'));
+const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
 
 function App() {
   const { isAuthenticated, user } = useAuth();
@@ -29,48 +31,50 @@ function App() {
   };
 
   return (
-    <Routes>
-      {/* Login route */}
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/citizen" element={<CitizenRequestPage />} />
+    <Suspense fallback={<div style={{ padding: '1rem' }}>Loading...</div>}>
+      <Routes>
+        {/* Login route */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/citizen" element={<CitizenRequestPage />} />
 
       {/* Admin dashboard - requires ADMIN role */}
-      <Route
-        path="/dashboard/admin"
-        element={
-          <ProtectedRoute requiredRoles={['ADMIN']}>
-            <AdminDashboard />
-          </ProtectedRoute>
-        }
-      />
+        <Route
+          path="/dashboard/admin"
+          element={
+            <ProtectedRoute requiredRoles={['ADMIN']}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
 
       {/* Dispatcher dashboard - requires DISPATCHER role */}
-      <Route
-        path="/dashboard/dispatcher"
-        element={
-          <ProtectedRoute requiredRoles={['DISPATCHER']}>
-            <DispatcherDashboard />
-          </ProtectedRoute>
-        }
-      />
+        <Route
+          path="/dashboard/dispatcher"
+          element={
+            <ProtectedRoute requiredRoles={['DISPATCHER']}>
+              <DispatcherDashboard />
+            </ProtectedRoute>
+          }
+        />
 
       {/* Driver dashboard - requires AMBULANCE_DRIVER role */}
-      <Route
-        path="/dashboard/driver"
-        element={
-          <ProtectedRoute requiredRoles={['AMBULANCE_DRIVER']}>
-            <DriverDashboard />
-          </ProtectedRoute>
-        }
-      />
+        <Route
+          path="/dashboard/driver"
+          element={
+            <ProtectedRoute requiredRoles={['AMBULANCE_DRIVER']}>
+              <DriverDashboard />
+            </ProtectedRoute>
+          }
+        />
 
       {/* Default route - redirect to appropriate dashboard or login */}
-      <Route path="/" element={<Navigate to={getDefaultDashboard()} replace />} />
+        <Route path="/" element={<Navigate to={getDefaultDashboard()} replace />} />
 
       {/* Catch-all route - redirect to appropriate dashboard or login */}
-      <Route path="*" element={<Navigate to={getDefaultDashboard()} replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to={getDefaultDashboard()} replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { EmergencyPropType } from '../utils/constants';
+import StatusTimeline from './StatusTimeline';
 import './EmergencyQueuePanel.css';
 
 /**
@@ -106,6 +107,8 @@ const EmergencyQueuePanel = ({ emergencies, onEmergencyClick }) => {
                     {emergency.status}
                   </span>
                 </div>
+
+                <StatusTimeline status={emergency.status} compact />
 
                 <div className="emergency-time">
                   <span className="label">Created:</span>

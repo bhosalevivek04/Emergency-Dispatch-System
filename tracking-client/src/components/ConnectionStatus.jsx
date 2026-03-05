@@ -11,19 +11,25 @@ const ConnectionStatus = ({ status }) => {
       case 'connected':
         return {
           color: '#4caf50',
-          text: 'Connected',
+          text: 'Live',
           icon: '●',
         };
       case 'connecting':
         return {
           color: '#ff9800',
-          text: 'Connecting...',
+          text: 'Reconnecting',
           icon: '◐',
+        };
+      case 'error':
+        return {
+          color: '#f44336',
+          text: 'Offline',
+          icon: '○',
         };
       case 'disconnected':
         return {
           color: '#f44336',
-          text: 'Disconnected',
+          text: 'Offline',
           icon: '○',
         };
       default:
@@ -43,13 +49,16 @@ const ConnectionStatus = ({ status }) => {
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
-        padding: '4px 12px',
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        padding: '4px 10px',
+        backgroundColor: '#f3f4f6',
         borderRadius: '4px',
-        fontSize: '14px',
+        border: '1px solid #d1d5db',
+        fontSize: '13px',
         fontWeight: '500',
       }}
       title={`WebSocket status: ${config.text}`}
+      role="status"
+      aria-live="polite"
     >
       <span
         style={{
@@ -61,7 +70,7 @@ const ConnectionStatus = ({ status }) => {
       >
         {config.icon}
       </span>
-      <span style={{ color: 'white' }}>
+      <span style={{ color: '#111827' }}>
         {config.text}
       </span>
       <style>
@@ -77,7 +86,7 @@ const ConnectionStatus = ({ status }) => {
 };
 
 ConnectionStatus.propTypes = {
-  status: PropTypes.oneOf(['connected', 'connecting', 'disconnected']).isRequired,
+  status: PropTypes.oneOf(['connected', 'connecting', 'disconnected', 'error']).isRequired,
 };
 
 export default ConnectionStatus;

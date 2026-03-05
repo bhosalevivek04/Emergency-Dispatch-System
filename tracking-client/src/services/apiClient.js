@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { withCorrelationHeader } from '../utils/correlation';
 
 /**
  * Axios client instance configured for the Emergency Dispatch System API Gateway.
@@ -39,6 +40,7 @@ const apiClient = axios.create({
  */
 apiClient.interceptors.request.use(
   (config) => {
+    config.headers = withCorrelationHeader(config.headers || {});
     if (authContextRef && authContextRef.accessToken) {
       config.headers.Authorization = `Bearer ${authContextRef.accessToken}`;
     }
@@ -60,6 +62,10 @@ apiClient.interceptors.request.use(
  */
 apiClient.interceptors.response.use(
   (response) => {
+    const correlationId = response.headers['x-correlation-id'];
+    if (correlationId) {
+      response.correlationId = correlationId;
+    }
     // Pass through successful responses
     return response;
   },
@@ -83,7 +89,6 @@ apiClient.interceptors.response.use(
         }
       } catch (refreshError) {
         // Token refresh failed - auth context will handle logout and redirect
-        console.error('Token refresh failed in API client:', refreshError);
         return Promise.reject(refreshError);
       }
     }

@@ -34,7 +34,6 @@ const DispatcherDashboard = () => {
   const [isLoadingMap, setIsLoadingMap] = useState(true);
 
   // WebSocket connection state
-  const [wsConnected, setWsConnected] = useState(false);
   const [wsConnectionState, setWsConnectionState] = useState('disconnected'); // 'connected', 'connecting', 'disconnected', 'error'
 
   // Selected items for highlighting
@@ -46,9 +45,11 @@ const DispatcherDashboard = () => {
   /**
    * Fetch initial emergency data
    */
-  const fetchEmergencies = useCallback(async () => {
+  const fetchEmergencies = useCallback(async (silent = false) => {
     try {
-      setIsLoadingEmergencies(true);
+      if (!silent) {
+        setIsLoadingEmergencies(true);
+      }
       // Fetch both PENDING and ASSIGNED emergencies
       const [pending, assigned] = await Promise.all([
         emergencyApi.getByStatus('PENDING'),
@@ -59,24 +60,27 @@ const DispatcherDashboard = () => {
       const assignedArray = Array.isArray(assigned) ? assigned : [];
       setEmergencies([...pendingArray, ...assignedArray]);
     } catch (error) {
-      console.error('Error fetching emergencies:', error);
       // Set empty array on error
       setEmergencies([]);
 
       // Provide specific error messages based on error type
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        showToast('Request timeout while loading emergencies. Please check your connection.', 'error');
-      } else if (error.code === 'ERR_NETWORK' || !error.response) {
-        showToast('Network error: Unable to reach server. Please check your connection.', 'error');
-      } else if (error.response?.status === 403) {
-        showToast('Access denied: You do not have permission to view emergencies.', 'error');
-      } else if (error.response?.status >= 500) {
-        showToast('Server error while loading emergencies. Please try again later.', 'error');
-      } else {
-        showToast('Failed to load emergencies. Please try again.', 'error');
+      if (!silent) {
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          showToast('Request timeout while loading emergencies. Please check your connection.', 'error');
+        } else if (error.code === 'ERR_NETWORK' || !error.response) {
+          showToast('Network error: Unable to reach server. Please check your connection.', 'error');
+        } else if (error.response?.status === 403) {
+          showToast('Access denied: You do not have permission to view emergencies.', 'error');
+        } else if (error.response?.status >= 500) {
+          showToast('Server error while loading emergencies. Please try again later.', 'error');
+        } else {
+          showToast('Failed to load emergencies. Please try again.', 'error');
+        }
       }
     } finally {
-      setIsLoadingEmergencies(false);
+      if (!silent) {
+        setIsLoadingEmergencies(false);
+      }
     }
   }, [showToast]);
 
@@ -92,21 +96,22 @@ const DispatcherDashboard = () => {
       // Ensure fleet is an array
       setAmbulances(Array.isArray(fleet) ? fleet : []);
     } catch (error) {
-      console.error('Error fetching ambulances:', error);
       // Set empty array on error
       setAmbulances([]);
 
       // Provide specific error messages based on error type
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        showToast('Request timeout while loading fleet. Please check your connection.', 'error');
-      } else if (error.code === 'ERR_NETWORK' || !error.response) {
-        showToast('Network error: Unable to reach server. Please check your connection.', 'error');
-      } else if (error.response?.status === 403) {
-        showToast('Access denied: You do not have permission to view fleet data.', 'error');
-      } else if (error.response?.status >= 500) {
-        showToast('Server error while loading fleet. Please try again later.', 'error');
-      } else {
-        showToast('Failed to load ambulance fleet. Please try again.', 'error');
+      if (!silent) {
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          showToast('Request timeout while loading fleet. Please check your connection.', 'error');
+        } else if (error.code === 'ERR_NETWORK' || !error.response) {
+          showToast('Network error: Unable to reach server. Please check your connection.', 'error');
+        } else if (error.response?.status === 403) {
+          showToast('Access denied: You do not have permission to view fleet data.', 'error');
+        } else if (error.response?.status >= 500) {
+          showToast('Server error while loading fleet. Please try again later.', 'error');
+        } else {
+          showToast('Failed to load ambulance fleet. Please try again.', 'error');
+        }
       }
     } finally {
       if (!silent) {
@@ -179,6 +184,7 @@ const DispatcherDashboard = () => {
     let unsubLocations;
     let reconnectTimeout;
     let unsubEmergencies;
+    let unsubStateListener;
 
     const connectWebSocket = async () => {
       try {
@@ -186,8 +192,6 @@ const DispatcherDashboard = () => {
 
         // Connect to WebSocket with JWT token
         await wsService.connect(accessToken);
-        setWsConnected(true);
-        setWsConnectionState('connected');
 
         // Subscribe to ambulance location updates (only real topic that exists)
         unsubLocations = wsService.subscribe('/topic/location', (update) => {
@@ -209,11 +213,7 @@ const DispatcherDashboard = () => {
         unsubEmergencies = wsService.subscribe('/topic/emergencies', (update) => {
           applyEmergencyUpdate(update);
         });
-
-        console.log('WebSocket subscriptions established');
       } catch (error) {
-        console.error('WebSocket connection failed:', error);
-        setWsConnected(false);
         setWsConnectionState('error');
 
         // Provide specific error messages
@@ -239,6 +239,10 @@ const DispatcherDashboard = () => {
       }
     };
 
+    unsubStateListener = wsService.onConnectionStateChange((state) => {
+      setWsConnectionState(state);
+    });
+
     connectWebSocket();
 
     // Cleanup on unmount
@@ -248,8 +252,8 @@ const DispatcherDashboard = () => {
       }
       if (unsubLocations) unsubLocations();
       if (unsubEmergencies) unsubEmergencies();
+      if (unsubStateListener) unsubStateListener();
       wsService.disconnect();
-      setWsConnected(false);
       setWsConnectionState('disconnected');
     };
   }, [accessToken, showToast, applyEmergencyUpdate]);
@@ -258,9 +262,22 @@ const DispatcherDashboard = () => {
    * Fetch initial data on mount
    */
   useEffect(() => {
-    fetchEmergencies();
+    fetchEmergencies(false);
     fetchAmbulances(false);
   }, [fetchEmergencies, fetchAmbulances]);
+
+  useEffect(() => {
+    if (wsConnectionState === 'connected') {
+      return;
+    }
+
+    const fallbackPoller = setInterval(() => {
+      fetchEmergencies(true);
+      fetchAmbulances(true);
+    }, 5000);
+
+    return () => clearInterval(fallbackPoller);
+  }, [wsConnectionState, fetchEmergencies, fetchAmbulances]);
 
   return (
     <div className="dispatcher-dashboard">
