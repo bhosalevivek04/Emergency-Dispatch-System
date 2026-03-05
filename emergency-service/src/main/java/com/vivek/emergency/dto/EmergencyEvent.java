@@ -43,4 +43,7 @@ public class EmergencyEvent {
 	@NotBlank(message = "priority is required")
 	@Pattern(regexp = "HIGH|MEDIUM|LOW", message = "priority must be HIGH, MEDIUM or LOW")
 	private String priority;
+
+	private String callerPhone;
+	private String description;
 }

@@ -24,6 +24,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     // Paths that don't require authentication
     private static final List<String> EXCLUDED_PATHS = List.of(
             "/auth/",
+            "/api/emergencies/public",
+            "/api/tracking/public",
             "/actuator/health",
             "/actuator/info",
             "/ws/ws-sockjs/info",  // SockJS handshake endpoint

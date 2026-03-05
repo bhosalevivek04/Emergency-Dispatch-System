@@ -1,0 +1,141 @@
+.citizen-page {
+  min-height: 100vh;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.citizen-header {
+  padding: 1.25rem 1.5rem;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.citizen-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.4rem;
+}
+
+.citizen-header p {
+  margin: 0;
+  color: #4b5563;
+}
+
+.citizen-content {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.citizen-map-section {
+  min-height: 520px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  background: #fff;
+}
+
+.citizen-form-section {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.citizen-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.citizen-form label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.citizen-form input,
+.citizen-form select,
+.citizen-form textarea,
+.track-row input {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.95rem;
+}
+
+.citizen-form button,
+.track-row button,
+.new-request-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: #dc2626;
+  cursor: pointer;
+}
+
+.locate-btn {
+  margin-bottom: 0.25rem;
+  background: #1d4ed8;
+}
+
+.locate-btn:disabled,
+.track-row button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.citizen-success-box {
+  margin-bottom: 1rem;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+  padding: 0.85rem;
+}
+
+.citizen-success-box h3 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  color: #166534;
+}
+
+.citizen-success-box p {
+  margin: 0 0 0.6rem;
+  color: #166534;
+}
+
+.new-request-btn {
+  background: #0f766e;
+}
+
+.citizen-status-box,
+.citizen-track-box {
+  margin-top: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f9fafb;
+}
+
+.track-row {
+  margin-top: 0.5rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+}
+
+.citizen-error {
+  margin-top: 1rem;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+@media (max-width: 980px) {
+  .citizen-content {
+    grid-template-columns: 1fr;
+  }
+
+  .citizen-map-section {
+    min-height: 360px;
+  }
+}

@@ -56,6 +56,8 @@ public class EmergencyService {
         emergency.setCoordinates(event.getLatitude(), event.getLongitude());
         emergency.setPriority(event.getPriority());
         emergency.setStatus("PENDING");
+        emergency.setCallerPhone(event.getCallerPhone());
+        emergency.setDescription(event.getDescription());
         Emergency saved = emergencyRepository.save(emergency);
 
         // 2. Write outbox entry in THE SAME TRANSACTION — atomic with the save above

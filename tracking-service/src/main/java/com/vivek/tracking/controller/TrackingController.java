@@ -64,6 +64,19 @@ public class TrackingController {
 	}
 
 	/**
+	 * Public endpoint for citizen tracking of a single assigned ambulance.
+	 * Keeps exposure minimal: one ambulance at a time, no fleet-wide public feed.
+	 */
+	@GetMapping("/public/ambulances/{ambulanceId}")
+	public ResponseEntity<AmbulanceLocationEvent> getLatestPublic(@PathVariable String ambulanceId) {
+		AmbulanceLocationEvent location = trackingCacheService.getLatest(ambulanceId);
+		if (location == null) {
+			return ResponseEntity.notFound().build();
+		}
+		return ResponseEntity.ok(location);
+	}
+
+	/**
 	 * Endpoint for mobile driver app to send location updates
 	 * Includes rate limiting to prevent overwhelming the system
 	 */

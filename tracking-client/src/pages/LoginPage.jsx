@@ -120,6 +120,9 @@ const LoginPage = () => {
           <p className="auth-switch-text">
             Need an account? <Link to="/register">Register</Link>
           </p>
+          <p className="auth-switch-text">
+            Need help now? <Link to="/citizen">Request Emergency</Link>
+          </p>
         </div>
       </div>
     </div>
