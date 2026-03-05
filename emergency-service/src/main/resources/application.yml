@@ -51,8 +51,30 @@ management:
         include: health,info,prometheus,metrics
   endpoint:
     health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,ping,diskSpace
+        liveness:
+          include: livenessState,ping
       show-details: when-authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    kafka:
+      enabled: true
   metrics:
     tags:
       application: ${spring.application.name}
-        
+
+startup:
+  dependency-check:
+    enabled: ${STARTUP_DEPENDENCY_CHECK_ENABLED:true}
+    timeout-seconds: ${STARTUP_DEPENDENCY_CHECK_TIMEOUT_SECONDS:5}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [%X{correlationId:-}] %logger{36} - %msg%n"

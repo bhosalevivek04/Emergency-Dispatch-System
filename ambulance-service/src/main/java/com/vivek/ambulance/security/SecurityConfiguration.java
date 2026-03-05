@@ -22,7 +22,7 @@ public class SecurityConfiguration {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .anyRequest().permitAll()
                 )
                 .addFilterBefore(headerAuthenticationFilter,

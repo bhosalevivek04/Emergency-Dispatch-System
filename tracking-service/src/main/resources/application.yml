@@ -28,7 +28,19 @@ management:
         include: health,info,prometheus,metrics
   endpoint:
     health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,redis,ping,diskSpace
+        liveness:
+          include: livenessState,ping
       show-details: when-authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
   metrics:
     tags:
       application: ${spring.application.name}
@@ -40,3 +52,10 @@ cors:
 logging:
   level:
     com.vivek.tracking.listener.TrackingLocationListener: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [%X{correlationId:-}] %logger{36} - %msg%n"
+
+startup:
+  dependency-check:
+    enabled: ${STARTUP_DEPENDENCY_CHECK_ENABLED:true}
+    timeout-seconds: ${STARTUP_DEPENDENCY_CHECK_TIMEOUT_SECONDS:5}

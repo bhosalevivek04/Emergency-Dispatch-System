@@ -25,7 +25,7 @@ public class SecurityConfiguration {
                         .frameOptions(frame -> frame.sameOrigin())
                 )
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/ws/**", "/ws-sockjs/**").permitAll()
                         .anyRequest().permitAll()
                 )

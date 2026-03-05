@@ -20,7 +20,19 @@ management:
         include: health,info,prometheus,metrics
   endpoint:
     health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,ping,diskSpace
+        liveness:
+          include: livenessState,ping
       show-details: when-authorized
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
   metrics:
     tags:
       application: ${spring.application.name}
@@ -29,3 +41,12 @@ notification:
   webhook:
     enabled: ${NOTIFICATION_WEBHOOK_ENABLED:false}
     url: ${NOTIFICATION_WEBHOOK_URL:https://webhook.site/a1779324-048b-4492-bc3e-2fd3cef812f3}
+
+startup:
+  dependency-check:
+    enabled: ${STARTUP_DEPENDENCY_CHECK_ENABLED:true}
+    timeout-seconds: ${STARTUP_DEPENDENCY_CHECK_TIMEOUT_SECONDS:5}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [%X{correlationId:-}] %logger{36} - %msg%n"
