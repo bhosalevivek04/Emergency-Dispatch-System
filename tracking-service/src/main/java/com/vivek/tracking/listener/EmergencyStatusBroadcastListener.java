@@ -29,6 +29,11 @@ public class EmergencyStatusBroadcastListener {
 		broadcastStatus(message, "COMPLETED");
 	}
 
+	@KafkaListener(topics = "ambulance-status-topic", groupId = "tracking-group")
+	public void handleInTransitStatus(String message) {
+		broadcastStatus(message, "");
+	}
+
 	private void broadcastStatus(String message, String fallbackStatus) {
 		try {
 			JsonNode node = objectMapper.readTree(message);

@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vivek.ambulance.dto.AssignmentEvent;
+import com.vivek.ambulance.dto.AmbulanceStatusEvent;
 import com.vivek.ambulance.dto.CompletionEvent;
 import com.vivek.ambulance.model.AmbulanceStatus;
 import com.vivek.ambulance.service.AmbulanceProducer;
@@ -295,6 +296,18 @@ public class AmbulanceAssignmentListener {
 			log.warn("Transition to {} failed for {} at version {} (currentStatus={}). " +
 							"Auto-heal will recover if stuck.",
 					targetStatus, ambulanceId, currentVersion, currentStatus);
+			return;
+		}
+
+		if (targetStatus == AmbulanceStatus.ON_ROUTE || targetStatus == AmbulanceStatus.ARRIVED) {
+			long updatedVersion = ambulanceStateTracker.getVersion(ambulanceId);
+			AmbulanceStatusEvent statusEvent = new AmbulanceStatusEvent(
+					ambulanceId,
+					emergencyId,
+					targetStatus.name(),
+					updatedVersion,
+					System.currentTimeMillis());
+			ambulanceProducer.sendStatus(statusEvent);
 		}
 	}
 

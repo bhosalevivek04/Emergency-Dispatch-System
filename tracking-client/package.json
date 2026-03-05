@@ -20,12 +20,17 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
     "eject": "react-scripts eject",
     "docker:build": "docker build -t tracking-client .",
     "docker:run": "docker run -p 3001:80 tracking-client",
     "services:start": "cd .. && docker-compose up -d kafka redis tracking-service",
     "services:stop": "cd .. && docker-compose down",
     "services:logs": "cd .. && docker-compose logs -f tracking-service"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
   },
   "eslintConfig": {
     "extends": "react-app"

@@ -1,19 +1,24 @@
 package com.vivek.emergency.listener;
 
-import com.vivek.emergency.config.TestKafkaConfig;
+import com.vivek.emergency.dto.EmergencyEvent;
 import com.vivek.emergency.service.EmergencyService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -33,7 +38,7 @@ import static org.mockito.Mockito.*;
 @SpringBootTest
 @ActiveProfiles("test")
 @DirtiesContext
-@Import(TestKafkaConfig.class)
+@Import(KafkaListenerExceptionHandlingTest.LocalKafkaTestConfig.class)
 class KafkaListenerExceptionHandlingTest {
 
     @Autowired private EmergencyStatusListener emergencyStatusListener;
@@ -99,5 +104,21 @@ class KafkaListenerExceptionHandlingTest {
     private double counter(String name) {
         try { return meterRegistry.counter(name).count(); }
         catch (Exception e) { return 0.0; }
+    }
+
+    @TestConfiguration
+    static class LocalKafkaTestConfig {
+        @Bean
+        @Primary
+        @SuppressWarnings("unchecked")
+        KafkaTemplate<String, Object> kafkaTemplate() {
+            return mock(KafkaTemplate.class);
+        }
+
+        @Bean
+        @SuppressWarnings("unchecked")
+        KafkaTemplate<String, EmergencyEvent> emergencyEventKafkaTemplate() {
+            return mock(KafkaTemplate.class);
+        }
     }
 }

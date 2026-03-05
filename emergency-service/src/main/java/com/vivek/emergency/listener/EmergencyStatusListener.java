@@ -66,4 +66,33 @@ public class EmergencyStatusListener {
             log.error("Failed to update emergency status: {}", message, e);
         }
     }
+
+    /**
+     * Listens to ambulance-status-topic for ON_ROUTE and ARRIVED transitions
+     */
+    @KafkaListener(topics = "ambulance-status-topic", groupId = "emergency-status-group")
+    public void handleInTransitStatus(String message) {
+        try {
+            JsonNode node = objectMapper.readTree(message);
+            String emergencyId = node.get("emergencyId").asText();
+            String ambulanceId = node.get("ambulanceId").asText();
+            String status = node.get("status").asText();
+
+            if (!"ON_ROUTE".equals(status) && !"ARRIVED".equals(status)) {
+                return;
+            }
+
+            emergencyService.updateStatus(emergencyId, status, ambulanceId);
+            meterRegistry.counter("emergency.status.updated.total", "status", status).increment();
+
+            log.info("Emergency status updated to {}: emergencyId={} ambulanceId={}",
+                    status, emergencyId, ambulanceId);
+        } catch (JsonProcessingException e) {
+            meterRegistry.counter("emergency.status.parse_error.total").increment();
+            log.error("Failed to parse in-transit status message: {}", message, e);
+        } catch (Exception e) {
+            meterRegistry.counter("emergency.status.update_error.total").increment();
+            log.error("Failed to update emergency in-transit status: {}", message, e);
+        }
+    }
 }

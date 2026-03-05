@@ -388,6 +388,7 @@ const CitizenRequestPage = () => {
     const hasEmergency = selectedLocation?.lat != null && selectedLocation?.lng != null;
     if (!hasAmbulance || !hasEmergency || statusData?.status === 'COMPLETED') {
       setRouteData(null);
+      setIsRouteLoading(false);
       return;
     }
 
@@ -443,6 +444,18 @@ const CitizenRequestPage = () => {
   const isMovingToEmergency =
     statusData?.status === 'ASSIGNED' && Number(ambulanceLocation?.speed ?? 0) > 0.5;
   const statusLabel = isMovingToEmergency ? 'ON_ROUTE' : (statusData?.status || 'UNKNOWN');
+  const routeDistanceMeters = Number(routeData?.distance ?? 0);
+  const rawEtaMinutes = Math.round(Number(routeData?.duration ?? 0) / 60);
+  const etaMinutes = routeDistanceMeters <= 30 ? 0 : Math.max(1, rawEtaMinutes);
+  const isAtPickupPoint =
+    statusData?.status !== 'COMPLETED' &&
+    ambulanceLocation &&
+    selectedLocation &&
+    routeDistanceMeters <= 30;
+  const isArrivingSoon =
+    statusLabel === 'ON_ROUTE' &&
+    routeData?.duration != null &&
+    etaMinutes <= 2;
   const mapCenter = useMemo(
     () => (selectedLocation ? [selectedLocation.lat, selectedLocation.lng] : [18.5204, 73.8567]),
     [selectedLocation]
@@ -586,9 +599,12 @@ const CitizenRequestPage = () => {
           )}
 
           {requestId && (
-            <div className="citizen-status-box">
+            <div className={`citizen-status-box ${isArrivingSoon ? 'arriving-soon' : ''}`}>
               <strong>Request ID:</strong> {requestId}
               <div><strong>Status:</strong> {statusLabel}</div>
+              {isArrivingSoon && (
+                <div className="arrival-soon-chip">Arriving soon ({etaMinutes} min)</div>
+              )}
               <StatusTimeline status={statusLabel} />
               {statusData?.assignedAmbulanceId && (
                 <div><strong>Ambulance:</strong> {statusData.assignedAmbulanceId}</div>
@@ -603,13 +619,16 @@ const CitizenRequestPage = () => {
                   <strong>Ambulance Speed:</strong> {Number(ambulanceLocation.speed ?? 0).toFixed(1)} km/h
                 </div>
               )}
+              {isAtPickupPoint && (
+                <div className="arrival-soon-chip">Ambulance has reached your location</div>
+              )}
               {(isRouteLoading || routeData) && (
                 <div className="route-info-box">
                   <div><strong>Route:</strong> {isRouteLoading && !routeData ? 'Calculating...' : 'Live path shown on map'}</div>
                   {routeData && (
                     <>
                       <div><strong>Distance:</strong> {(Number(routeData.distance ?? 0) / 1000).toFixed(2)} km</div>
-                      <div><strong>Estimated Arrival:</strong> {Math.max(1, Math.round(Number(routeData.duration ?? 0) / 60))} min</div>
+                      <div><strong>Estimated Arrival:</strong> {etaMinutes} min</div>
                     </>
                   )}
                 </div>

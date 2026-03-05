@@ -185,6 +185,24 @@
   margin-top: 0.6rem;
 }
 
+.citizen-status-box.arriving-soon {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.arrival-soon-chip {
+  margin-top: 0.45rem;
+  margin-bottom: 0.2rem;
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+
 .route-info-box {
   margin-top: 0.55rem;
   background: #eff6ff;
