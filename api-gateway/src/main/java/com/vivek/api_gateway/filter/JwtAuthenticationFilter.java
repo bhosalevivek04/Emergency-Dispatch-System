@@ -74,6 +74,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
             // Add user context to request headers for downstream services
             ServerHttpRequest.Builder requestBuilder = request.mutate()
+                    .headers(headers -> {
+                        headers.remove("X-User-Username");
+                        headers.remove("X-User-Roles");
+                        headers.remove("X-User-Ambulance-Id");
+                    })
                     .header("X-User-Username", username)
                     .header("X-User-Roles", roles);
 

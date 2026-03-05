@@ -50,6 +50,7 @@ public class AmbulanceMovementSimulator {
 	
 	// Track last broadcast time for each ambulance
 	private final Map<String, Long> lastBroadcastTime = new ConcurrentHashMap<>();
+	private final Map<String, Location> lastPublishedLocations = new ConcurrentHashMap<>();
 
 	// Movement speed: ~0.00002 degrees per update (~2 meters per second for realistic visualization)
 	// At 1 second update rate, this gives ~7.2 km/h walking speed for demo purposes
@@ -63,6 +64,8 @@ public class AmbulanceMovementSimulator {
 	private static final double MIN_MOVEMENT_SPEED = 0.000005;
 	private static final double MAX_MOVEMENT_SPEED = 0.001;
 	private static final double DESTINATION_TOLERANCE_DEGREES = 0.00005;
+	private static final double MIN_PUBLISH_DISTANCE_METERS = 5.0;
+	private static final int MAX_ROUTE_WAYPOINTS = 200;
 
 	// Initial ambulance positions (Pune area) - will be initialized from config
 	private static final double[][] INITIAL_POSITIONS = {
@@ -231,8 +234,7 @@ public class AmbulanceMovementSimulator {
 			
 			// Only broadcast if enough time has passed (throttle to every 3 seconds)
 			long currentTime = System.currentTimeMillis();
-			Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
-			if (lastBroadcast == null || (currentTime - lastBroadcast) >= MOVING_BROADCAST_INTERVAL) {
+			if (shouldPublishMovingUpdate(ambulanceId, current.lat, current.lon, currentTime)) {
 				publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
 				lastBroadcastTime.put(ambulanceId, currentTime);
 				
@@ -276,8 +278,7 @@ public class AmbulanceMovementSimulator {
 
 			// Only broadcast if enough time has passed (throttle to every 3 seconds)
 			long currentTime = System.currentTimeMillis();
-			Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
-			if (lastBroadcast == null || (currentTime - lastBroadcast) >= MOVING_BROADCAST_INTERVAL) {
+			if (shouldPublishMovingUpdate(ambulanceId, current.lat, current.lon, currentTime)) {
 				publishLocation(ambulanceId, current.lat, current.lon, speed, heading);
 				lastBroadcastTime.put(ambulanceId, currentTime);
 				
@@ -335,6 +336,7 @@ public class AmbulanceMovementSimulator {
 				.progress(progress)
 				.build();
 		producer.sendLocation(event);
+		lastPublishedLocations.put(ambulanceId, new Location(lat, lon));
 	}
 
 	/**
@@ -353,17 +355,18 @@ public class AmbulanceMovementSimulator {
 			
 			if (routeInfo != null && routeInfo.waypoints != null && !routeInfo.waypoints.isEmpty() 
 				&& routeInfo.durationSeconds > 0) {
+				List<double[]> optimizedWaypoints = capWaypoints(routeInfo.waypoints, MAX_ROUTE_WAYPOINTS);
 				// OSRM returned valid route with duration
-				routeWaypoints.put(ambulanceId, routeInfo.waypoints);
+				routeWaypoints.put(ambulanceId, optimizedWaypoints);
 				currentWaypointIndex.put(ambulanceId, 0);
 				routeDurations.put(ambulanceId, routeInfo.durationSeconds);
 
-				double routeLengthDegrees = calculateRouteLengthDegrees(routeInfo.waypoints);
+				double routeLengthDegrees = calculateRouteLengthDegrees(optimizedWaypoints);
 				double speedPerTick = routeLengthDegrees / Math.max(routeInfo.durationSeconds, 1.0);
 				movementSpeeds.put(ambulanceId, clampSpeed(speedPerTick));
 				
 				log.info("Set destination for {} to ({}, {}) with {} waypoints from OSRM, ETA: {} minutes", 
-					ambulanceId, lat, lon, routeInfo.waypoints.size(), routeInfo.durationSeconds / 60.0);
+					ambulanceId, lat, lon, optimizedWaypoints.size(), routeInfo.durationSeconds / 60.0);
 				
 				return routeInfo.durationSeconds;
 			} else {
@@ -412,7 +415,48 @@ public class AmbulanceMovementSimulator {
 		currentWaypointIndex.remove(ambulanceId);
 		routeDurations.remove(ambulanceId);
 		movementSpeeds.remove(ambulanceId);
+		lastPublishedLocations.remove(ambulanceId);
 		log.info("Cleared destination and route for {}", ambulanceId);
+	}
+
+	private boolean shouldPublishMovingUpdate(String ambulanceId, double lat, double lon, long currentTime) {
+		Long lastBroadcast = lastBroadcastTime.get(ambulanceId);
+		if (lastBroadcast != null && (currentTime - lastBroadcast) < MOVING_BROADCAST_INTERVAL) {
+			return false;
+		}
+
+		Location lastPublished = lastPublishedLocations.get(ambulanceId);
+		if (lastPublished == null) {
+			return true;
+		}
+
+		double movedMeters = haversineMeters(lastPublished.lat, lastPublished.lon, lat, lon);
+		return movedMeters >= MIN_PUBLISH_DISTANCE_METERS;
+	}
+
+	private List<double[]> capWaypoints(List<double[]> originalWaypoints, int maxWaypoints) {
+		if (originalWaypoints == null || originalWaypoints.size() <= maxWaypoints) {
+			return originalWaypoints;
+		}
+
+		List<double[]> capped = new ArrayList<>(maxWaypoints);
+		double step = (double) (originalWaypoints.size() - 1) / (maxWaypoints - 1);
+		for (int i = 0; i < maxWaypoints; i++) {
+			int sourceIndex = Math.min(originalWaypoints.size() - 1, (int) Math.round(i * step));
+			capped.add(originalWaypoints.get(sourceIndex));
+		}
+		return capped;
+	}
+
+	private double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
+		final double r = 6371000.0;
+		double dLat = Math.toRadians(lat2 - lat1);
+		double dLon = Math.toRadians(lon2 - lon1);
+		double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+				+ Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+				* Math.sin(dLon / 2) * Math.sin(dLon / 2);
+		double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+		return r * c;
 	}
 
 	private double calculateRouteLengthDegrees(List<double[]> waypoints) {

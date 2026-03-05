@@ -137,3 +137,4 @@ error.txt
 **/keys/private_key_pkcs8.pem
 # Public keys are safe to commit
 !**/keys/public_key.pem
+emergency_dispatch_audit.docx

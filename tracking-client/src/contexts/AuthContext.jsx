@@ -37,7 +37,14 @@ export const AuthProvider = ({ children }) => {
       if (!response.ok) throw new Error('Token refresh failed');
 
       const data = await response.json();
-      setAuthState((prev) => ({ ...prev, accessToken: data.accessToken }));
+      if (data.refreshToken) {
+        sessionStorage.setItem('refreshToken', data.refreshToken);
+      }
+      setAuthState((prev) => ({
+        ...prev,
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken || prev.refreshToken,
+      }));
       return data.accessToken;
     } catch (error) {
       console.error('Token refresh error:', error);
@@ -82,8 +89,11 @@ export const AuthProvider = ({ children }) => {
           isAuthenticated: true,
           user,
           accessToken: data.accessToken,
-          refreshToken: storedRefreshToken,
+          refreshToken: data.refreshToken || storedRefreshToken,
         });
+        if (data.refreshToken) {
+          sessionStorage.setItem('refreshToken', data.refreshToken);
+        }
       } catch (error) {
         console.error('Session restoration failed:', error);
         sessionStorage.removeItem('refreshToken');

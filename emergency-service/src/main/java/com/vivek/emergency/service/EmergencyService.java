@@ -43,10 +43,11 @@ public class EmergencyService {
         }
         log.info("Creating emergency: {}", event.getEmergencyId());
 
-        // Check for duplicates
-        if (emergencyRepository.findByEmergencyId(event.getEmergencyId()).isPresent()) {
+        // Check for duplicates (single DB lookup)
+        Optional<Emergency> existing = emergencyRepository.findByEmergencyId(event.getEmergencyId());
+        if (existing.isPresent()) {
             log.warn("Duplicate emergencyId received, returning existing: {}", event.getEmergencyId());
-            return emergencyRepository.findByEmergencyId(event.getEmergencyId()).get();
+            return existing.get();
         }
 
         // 1. Save emergency to PostgreSQL

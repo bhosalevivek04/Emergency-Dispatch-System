@@ -112,16 +112,14 @@ public class AuthService {
 
     @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
-        RefreshToken refreshToken = refreshTokenService.findByToken(request.getRefreshToken())
-                .orElseThrow(() -> {
-                    meterRegistry.counter("auth.refresh.failed", "reason", "token_not_found").increment();
-                    return new RuntimeException("Invalid refresh token");
-                });
-
-        // Verify expiration
-        refreshToken = refreshTokenService.verifyExpiration(refreshToken);
-
-        User user = refreshToken.getUser();
+        RefreshToken rotatedToken;
+        try {
+            rotatedToken = refreshTokenService.rotateRefreshToken(request.getRefreshToken());
+        } catch (RuntimeException ex) {
+            meterRegistry.counter("auth.refresh.failed", "reason", "token_invalid_or_used").increment();
+            throw ex;
+        }
+        User user = rotatedToken.getUser();
 
         // Generate new access token
         String accessToken = jwtService.generateToken(user.getUsername(), user.getRoles(), user.getAmbulanceId());
@@ -131,7 +129,7 @@ public class AuthService {
 
         return AuthResponse.builder()
                 .accessToken(accessToken)
-                .refreshToken(refreshToken.getToken())
+                .refreshToken(rotatedToken.getToken())
                 .tokenType("Bearer")
                 .expiresIn(jwtService.getExpirationTime())
                 .username(user.getUsername())

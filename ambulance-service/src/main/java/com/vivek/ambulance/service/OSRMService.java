@@ -1,15 +1,19 @@
 package com.vivek.ambulance.service;
 
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import com.vivek.ambulance.dto.OSRMResponse;
 import com.vivek.ambulance.dto.OSRMRoute;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 
 @Service
@@ -22,12 +26,21 @@ public class OSRMService {
 	@Value("${osrm.enabled:true}")
 	private boolean osrmEnabled;
 
-	private final RestTemplate restTemplate = new RestTemplate();
+	private final RestTemplate restTemplate;
+
+	public OSRMService(RestTemplateBuilder restTemplateBuilder) {
+		this.restTemplate = restTemplateBuilder
+				.connectTimeout(Duration.ofSeconds(3))
+				.readTimeout(Duration.ofSeconds(5))
+				.build();
+	}
 
 	/**
 	 * Get route information from OSRM
 	 * Returns RouteInfo with waypoints and duration, or null if unavailable
 	 */
+	@CircuitBreaker(name = "osrm", fallbackMethod = "fallbackRouteInfo")
+	@Retry(name = "osrm", fallbackMethod = "fallbackRouteInfo")
 	public RouteInfo getRouteInfo(double fromLat, double fromLon, double toLat, double toLon) {
 		if (!osrmEnabled) {
 			log.debug("OSRM is disabled, skipping route fetch");
@@ -86,6 +99,12 @@ public class OSRMService {
 			log.warn("OSRM route fetch failed: {}, falling back to straight line", e.getMessage());
 			return null;
 		}
+	}
+
+	private RouteInfo fallbackRouteInfo(double fromLat, double fromLon, double toLat, double toLon, Throwable throwable) {
+		log.warn("OSRM circuit fallback triggered from=({},{}) to=({},{}) reason={}",
+				fromLat, fromLon, toLat, toLon, throwable == null ? "unknown" : throwable.getMessage());
+		return null;
 	}
 	
 	/**

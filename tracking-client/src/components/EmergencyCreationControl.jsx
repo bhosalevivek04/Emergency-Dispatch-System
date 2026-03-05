@@ -148,15 +148,15 @@ const EmergencyCreationControl = ({ onEmergencyCreated, onModeChange, onLocation
               <label className="form-label">Location</label>
               {selectedLocation ? (
                 <div className="location-display">
-                  <span className="location-icon">📍</span>
+                  <span className="location-icon" aria-hidden="true">📍</span>
                   <span className="location-coords">
                     {selectedLocation.lat.toFixed(4)}, {selectedLocation.lng.toFixed(4)}
                   </span>
                 </div>
               ) : (
                 <div className="location-prompt">
-                  <span className="prompt-icon">👆</span>
-                  <span className="prompt-text">Click on the map to set location</span>
+                  <span className="prompt-icon" aria-hidden="true">🗺️</span>
+                  <span className="prompt-text">Select location from map</span>
                 </div>
               )}
             </div>

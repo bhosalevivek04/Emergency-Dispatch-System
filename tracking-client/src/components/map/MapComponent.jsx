@@ -1,6 +1,7 @@
 import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet';
 import PropTypes from 'prop-types';
 import 'leaflet/dist/leaflet.css';
+import './MapComponent.css';
 
 /**
  * MapEventsHandler - Component to handle map click events
@@ -36,6 +37,7 @@ export default function MapComponent({
       center={center}
       zoom={zoom}
       style={style}
+      className={onMapClick ? 'map-select-mode' : ''}
       scrollWheelZoom={true}
     >
       <TileLayer

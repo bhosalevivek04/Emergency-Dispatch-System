@@ -5,12 +5,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -39,7 +41,10 @@ public class AmbulanceAssignmentListener {
 	private final AmbulanceMovementSimulator movementSimulator;
 	private final StringRedisTemplate redisTemplate;
 	private final MeterRegistry meterRegistry;
-	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+	private ScheduledExecutorService scheduler;
+
+	@Value("${ambulance.fleet.ids:AMB-101,AMB-102,AMB-103}")
+	private String fleetIdsConfig;
 
 	public AmbulanceAssignmentListener(
 			ObjectMapper objectMapper,
@@ -54,6 +59,20 @@ public class AmbulanceAssignmentListener {
 		this.movementSimulator = movementSimulator;
 		this.redisTemplate = redisTemplate;
 		this.meterRegistry = meterRegistry;
+	}
+
+	@PostConstruct
+	public void initializeScheduler() {
+		int fleetCount = 0;
+		if (fleetIdsConfig != null && !fleetIdsConfig.isBlank()) {
+			fleetCount = (int) java.util.Arrays.stream(fleetIdsConfig.split(","))
+					.map(String::trim)
+					.filter(id -> !id.isBlank())
+					.count();
+		}
+		int poolSize = Math.max(4, fleetCount * 2);
+		scheduler = Executors.newScheduledThreadPool(poolSize);
+		log.info("Initialized assignment scheduler thread pool size={} fleetCount={}", poolSize, fleetCount);
 	}
 
 	@KafkaListener(topics = "ambulance-assigned-topic", groupId = "ambulance-driver-group")
@@ -353,7 +372,9 @@ public class AmbulanceAssignmentListener {
 
 	@PreDestroy
 	public void shutdown() {
-		scheduler.shutdown();
+		if (scheduler != null) {
+			scheduler.shutdown();
+		}
 	}
 
 	private boolean isDuplicate(String type, String key) {

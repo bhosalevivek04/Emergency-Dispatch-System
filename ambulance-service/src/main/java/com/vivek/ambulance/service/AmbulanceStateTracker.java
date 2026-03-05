@@ -237,47 +237,78 @@ public class AmbulanceStateTracker {
 	}
 
 	public void healIfStuck(String ambulanceId) {
-		AmbulanceStatus status = getStatus(ambulanceId);
-		if (status == null || status == AmbulanceStatus.AVAILABLE || status == AmbulanceStatus.COMPLETED) {
-			return;
-		}
-
+		ensureStateExists(ambulanceId);
 		long now = System.currentTimeMillis();
-		long lastUpdated = parseLongOrDefault(redisTemplate.opsForValue().get(lastUpdatedKey(ambulanceId)), 0L);
-		long ageMs = now - lastUpdated;
-		String activeEmergencyId = redisTemplate.opsForValue().get(activeEmergencyKey(ambulanceId));
-		boolean isOrphanAssigned = status == AmbulanceStatus.ASSIGNED
-				&& (activeEmergencyId == null || activeEmergencyId.isBlank());
-		boolean isStaleAssigned = status == AmbulanceStatus.ASSIGNED && ageMs > STALE_ASSIGNMENT_TIMEOUT_MS;
-		boolean isStaleInFlight = (status == AmbulanceStatus.ON_ROUTE || status == AmbulanceStatus.ARRIVED)
-				&& ageMs > STALE_IN_FLIGHT_TIMEOUT_MS;
 
-		if (!isOrphanAssigned && !isStaleAssigned && !isStaleInFlight) {
+		String script = """
+				local statusKey = KEYS[1]
+				local versionKey = KEYS[2]
+				local lastUpdatedKey = KEYS[3]
+				local activeEmergencyKey = KEYS[4]
+
+				local now = tonumber(ARGV[1])
+				local staleAssignmentTimeoutMs = tonumber(ARGV[2])
+				local staleInFlightTimeoutMs = tonumber(ARGV[3])
+
+				local status = redis.call('GET', statusKey)
+				if not status then
+					return -3
+				end
+				if status == 'BUSY' then
+					status = 'ASSIGNED'
+					redis.call('SET', statusKey, 'ASSIGNED')
+				end
+				if status == 'AVAILABLE' or status == 'COMPLETED' then
+					return 0
+				end
+
+				local lastUpdatedRaw = redis.call('GET', lastUpdatedKey)
+				local lastUpdated = tonumber(lastUpdatedRaw or '0')
+				local ageMs = now - lastUpdated
+
+				local activeEmergencyId = redis.call('GET', activeEmergencyKey)
+				local isOrphanAssigned = status == 'ASSIGNED' and (not activeEmergencyId or activeEmergencyId == '')
+				local isStaleAssigned = status == 'ASSIGNED' and ageMs > staleAssignmentTimeoutMs
+				local isStaleInFlight = (status == 'ON_ROUTE' or status == 'ARRIVED') and ageMs > staleInFlightTimeoutMs
+
+				if not isOrphanAssigned and not isStaleAssigned and not isStaleInFlight then
+					return 0
+				end
+
+				local versionRaw = redis.call('GET', versionKey)
+				local version = tonumber(versionRaw or '0')
+				redis.call('SET', statusKey, 'AVAILABLE')
+				redis.call('SET', versionKey, tostring(version + 1))
+				redis.call('SET', lastUpdatedKey, tostring(now))
+				redis.call('DEL', activeEmergencyKey)
+
+				if isOrphanAssigned then return 1 end
+				if isStaleAssigned then return 2 end
+				return 3
+				""";
+
+		DefaultRedisScript<Long> redisScript = new DefaultRedisScript<>();
+		redisScript.setScriptText(script);
+		redisScript.setResultType(Long.class);
+
+		Long result = redisTemplate.execute(redisScript,
+				java.util.List.of(statusKey(ambulanceId), versionKey(ambulanceId), lastUpdatedKey(ambulanceId),
+						activeEmergencyKey(ambulanceId)),
+				String.valueOf(now), String.valueOf(STALE_ASSIGNMENT_TIMEOUT_MS), String.valueOf(STALE_IN_FLIGHT_TIMEOUT_MS));
+
+		if (result == null || result <= 0) {
 			return;
 		}
 
-		long currentVersion = getVersion(ambulanceId);
-		redisTemplate.opsForValue().set(statusKey(ambulanceId), AmbulanceStatus.AVAILABLE.name());
-		redisTemplate.opsForValue().set(versionKey(ambulanceId), String.valueOf(currentVersion + 1));
-		redisTemplate.opsForValue().set(lastUpdatedKey(ambulanceId), String.valueOf(now));
-		redisTemplate.delete(activeEmergencyKey(ambulanceId));
-		String reason = isOrphanAssigned ? "ORPHAN_ASSIGNED"
-				: isStaleAssigned ? "STALE_ASSIGNED"
-						: "STALE_" + status.name();
+		String reason = switch (result.intValue()) {
+		case 1 -> "ORPHAN_ASSIGNED";
+		case 2 -> "STALE_ASSIGNED";
+		case 3 -> "STALE_IN_FLIGHT";
+		default -> "UNKNOWN";
+		};
+		long newVersion = getVersion(ambulanceId);
 		meterRegistry.counter("ambulance.auto_heal.total", "reason", reason).increment();
-		log.warn(
-				"Auto-heal applied ambulanceId={} reason={} ageMs={} previousVersion={} newVersion={} newStatus=AVAILABLE",
-				ambulanceId, reason, ageMs, currentVersion, currentVersion + 1);
-	}
-
-	private long parseLongOrDefault(String value, long defaultValue) {
-		if (value == null || value.isBlank()) {
-			return defaultValue;
-		}
-		try {
-			return Long.parseLong(value);
-		} catch (NumberFormatException ex) {
-			return defaultValue;
-		}
+		log.warn("Auto-heal applied ambulanceId={} reason={} newVersion={} newStatus=AVAILABLE",
+				ambulanceId, reason, newVersion);
 	}
 }

@@ -30,9 +30,10 @@
 }
 
 .fab-icon {
-  font-size: 2rem;
-  font-weight: 300;
+  font-size: 1.8rem;
+  font-weight: 600;
   line-height: 1;
+  transform: translateY(-1px);
 }
 
 /* Emergency Creation Panel */
@@ -149,7 +150,7 @@
 }
 
 .prompt-icon {
-  font-size: 1.25rem;
+  font-size: 1.15rem;
 }
 
 .prompt-text {

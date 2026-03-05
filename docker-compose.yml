@@ -24,6 +24,8 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     networks:
       - dispatch-network
     healthcheck:
@@ -109,6 +111,12 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: on-failure
 
   dispatch-service:
@@ -132,6 +140,12 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: on-failure
 
   ambulance-service:
@@ -156,6 +170,12 @@ services:
       AMBULANCE_FLEET_IDS: ${AMBULANCE_FLEET_IDS}
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: on-failure
 
   notification-service:
@@ -168,8 +188,16 @@ services:
       - "8084:8084"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NOTIFICATION_WEBHOOK_ENABLED: "true"
+      NOTIFICATION_WEBHOOK_URL: https://webhook.site/a1779324-048b-4492-bc3e-2fd3cef812f3
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: on-failure
 
   tracking-service:
@@ -189,18 +217,30 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     networks:
       - dispatch-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: on-failure
 
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
     depends_on:
-      - auth-service
-      - emergency-service
-      - dispatch-service
-      - ambulance-service
-      - tracking-service
-      - notification-service
+      auth-service:
+        condition: service_healthy
+      emergency-service:
+        condition: service_healthy
+      dispatch-service:
+        condition: service_healthy
+      ambulance-service:
+        condition: service_healthy
+      tracking-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:

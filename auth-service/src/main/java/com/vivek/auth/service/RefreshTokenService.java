@@ -44,6 +44,24 @@ public class RefreshTokenService {
     }
 
     @Transactional
+    public RefreshToken rotateRefreshToken(String token) {
+        RefreshToken currentToken = refreshTokenRepository.findByToken(token)
+                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+
+        if (currentToken.isExpired() || currentToken.getRevoked()) {
+            refreshTokenRepository.delete(currentToken);
+            throw new RuntimeException("Refresh token expired or revoked. Please login again.");
+        }
+
+        int revoked = refreshTokenRepository.revokeIfActive(token);
+        if (revoked == 0) {
+            throw new RuntimeException("Refresh token already used or revoked. Please login again.");
+        }
+
+        return createRefreshToken(currentToken.getUser());
+    }
+
+    @Transactional
     public RefreshToken verifyExpiration(RefreshToken token) {
         if (token.isExpired() || token.getRevoked()) {
             refreshTokenRepository.delete(token);

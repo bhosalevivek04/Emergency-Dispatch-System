@@ -64,7 +64,7 @@ spring:
 
         # Notification Service Routes
         - id: notification-service
-          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8085}
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}
           predicates:
             - Path=/api/notifications,/api/notifications/**
           filters:

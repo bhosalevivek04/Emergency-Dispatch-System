@@ -59,6 +59,7 @@ public class DataInitializer implements CommandLineRunner {
                     .email("driver" + i + "@emergency-dispatch.com")
                     .password(passwordEncoder.encode("driver123"))
                     .roles("AMBULANCE_DRIVER")
+                    .ambulanceId("AMB-10" + i)
                     .enabled(true)
                     .build();
             userRepository.save(driver);

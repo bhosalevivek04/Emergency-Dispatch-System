@@ -18,6 +18,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -44,13 +45,19 @@ public class DispatchEngine {
 	private final AssignmentHistoryService assignmentHistoryService;
 
 	private final Map<String, AmbulanceLocationEvent> ambulanceState = new ConcurrentHashMap<>();
+	private final Map<String, RouteEstimate> routeEstimateCache = new ConcurrentHashMap<>();
 	private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
 	private static final String ASSIGNMENT_TOPIC = "ambulance-assigned-topic";
 	private static final String QUEUE_HIGH = "dispatch:queue:HIGH";
 	private static final String QUEUE_MEDIUM = "dispatch:queue:MEDIUM";
 	private static final String QUEUE_LOW = "dispatch:queue:LOW";
+	private static final String INFLIGHT_HIGH = "dispatch:inflight:HIGH";
+	private static final String INFLIGHT_MEDIUM = "dispatch:inflight:MEDIUM";
+	private static final String INFLIGHT_LOW = "dispatch:inflight:LOW";
 	private static final long MAX_LOCATION_AGE_MS = 60_000L;
+	private static final double MAX_DISPATCH_RADIUS_KM = 20.0;
+	private static final long ROUTE_ESTIMATE_CACHE_TTL_MS = 30_000L;
 	private Counter emergencyQueuedCounter;
 	private Counter assignmentPublishedCounter;
 	private Counter noAvailableAmbulanceCounter;
@@ -94,9 +101,20 @@ public class DispatchEngine {
 	}
 
 	private void dispatchNextEmergency() {
+		QueueClaim claim = null;
 		try {
-			EmergencyEvent emergency = peekEmergency();
+			long now = System.currentTimeMillis();
+			routeEstimateCache.entrySet().removeIf(entry -> entry.getValue().expiresAtMs() <= now);
+
+			claim = claimRawEmergency();
+			if (claim == null) {
+				return;
+			}
+
+			EmergencyEvent emergency = parseEmergencyPayload(claim.payload());
 			if (emergency == null) {
+				acknowledgeClaim(claim);
+				claim = null;
 				return;
 			}
 
@@ -107,6 +125,8 @@ public class DispatchEngine {
 				noAvailableAmbulanceCounter.increment();
 				log.warn("No ambulance available emergencyId={} knownAmbulances={} availableCount={}", 
 					emergency.getEmergencyId(), ambulanceState.size(), getAvailableAmbulanceCount());
+				releaseClaim(claim);
+				claim = null;
 				return;
 			}
 
@@ -115,6 +135,8 @@ public class DispatchEngine {
 				lockAcquireFailureCounter.increment();
 				log.warn("Ambulance lock acquisition failed ambulanceId={} emergencyId={}", ambulanceId,
 						emergency.getEmergencyId());
+				releaseClaim(claim);
+				claim = null;
 				return;
 			}
 
@@ -136,7 +158,8 @@ public class DispatchEngine {
 				// Don't set status here - let ambulance service handle it atomically with activeEmergencyId
 				// to avoid race condition with auto-heal detecting orphan assignments
 				
-				acknowledgeEmergency(emergency);
+				acknowledgeClaim(claim);
+				claim = null;
 				assignmentPublishedCounter.increment();
 				publishTimer.stop(assignmentPublishTimer);
 
@@ -161,13 +184,20 @@ public class DispatchEngine {
 				Thread.currentThread().interrupt();
 				assignmentPublishFailureCounter.increment();
 				log.warn("Assignment publish interrupted emergencyId={} retry=true", emergency.getEmergencyId());
+				releaseClaim(claim);
+				claim = null;
 			} catch (ExecutionException | TimeoutException e) {
 				assignmentPublishFailureCounter.increment();
 				log.error("Assignment publish failed emergencyId={} retry=true", emergency.getEmergencyId(), e);
+				releaseClaim(claim);
+				claim = null;
 			} finally {
 				releaseLock(ambulanceId);
 			}
 		} catch (Exception e) {
+			if (claim != null) {
+				releaseClaim(claim);
+			}
 			log.error("Dispatch loop failure", e);
 		}
 	}
@@ -219,55 +249,67 @@ public class DispatchEngine {
 		}
 	}
 
-	private EmergencyEvent peekEmergency() {
-		String payload = peekRawEmergency();
-		if (payload == null) {
-			return null;
-		}
-
+	private EmergencyEvent parseEmergencyPayload(String payload) {
 		try {
 			return objectMapper.readValue(payload, EmergencyEvent.class);
 		} catch (JsonProcessingException e) {
 			log.error("Invalid emergency payload in Redis queue. Dropping item.");
-			acknowledgeRawPayload(payload);
 			return null;
 		}
 	}
 
-	private String peekRawEmergency() {
-		String high = redisTemplate.opsForList().index(QUEUE_HIGH, 0);
+	private QueueClaim claimRawEmergency() {
+		String high = claimFromQueue(QUEUE_HIGH, INFLIGHT_HIGH);
 		if (high != null) {
-			return high;
+			return new QueueClaim(high, QUEUE_HIGH, INFLIGHT_HIGH);
 		}
 
-		String medium = redisTemplate.opsForList().index(QUEUE_MEDIUM, 0);
+		String medium = claimFromQueue(QUEUE_MEDIUM, INFLIGHT_MEDIUM);
 		if (medium != null) {
-			return medium;
+			return new QueueClaim(medium, QUEUE_MEDIUM, INFLIGHT_MEDIUM);
 		}
 
-		return redisTemplate.opsForList().index(QUEUE_LOW, 0);
+		String low = claimFromQueue(QUEUE_LOW, INFLIGHT_LOW);
+		if (low != null) {
+			return new QueueClaim(low, QUEUE_LOW, INFLIGHT_LOW);
+		}
+		return null;
 	}
 
-	private void acknowledgeEmergency(EmergencyEvent emergency) {
-		try {
-			acknowledgeRawPayload(objectMapper.writeValueAsString(emergency));
-		} catch (JsonProcessingException e) {
-			log.error("Emergency ack serialization failed emergencyId={}", emergency.getEmergencyId(), e);
+	private String claimFromQueue(String sourceQueue, String inflightQueue) {
+		String script = """
+				local source = KEYS[1]
+				local inflight = KEYS[2]
+				local payload = redis.call('LPOP', source)
+				if not payload then
+					return nil
+				end
+				redis.call('RPUSH', inflight, payload)
+				return payload
+				""";
+
+		DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+		redisScript.setScriptText(script);
+		redisScript.setResultType(String.class);
+
+		return redisTemplate.execute(redisScript, java.util.List.of(sourceQueue, inflightQueue));
+	}
+
+	private void acknowledgeClaim(QueueClaim claim) {
+		Long removed = redisTemplate.opsForList().remove(claim.inflightQueue(), 1, claim.payload());
+		if (removed == null || removed == 0) {
+			log.warn("Claim acknowledgement missed payload inflightQueue={}", claim.inflightQueue());
 		}
 	}
 
-	private void acknowledgeRawPayload(String payload) {
-		Long removedFromHigh = redisTemplate.opsForList().remove(QUEUE_HIGH, 1, payload);
-		if (removedFromHigh != null && removedFromHigh > 0) {
+	private void releaseClaim(QueueClaim claim) {
+		Long removed = redisTemplate.opsForList().remove(claim.inflightQueue(), 1, claim.payload());
+		if (removed != null && removed > 0) {
+			redisTemplate.opsForList().leftPush(claim.sourceQueue(), claim.payload());
 			return;
 		}
-
-		Long removedFromMedium = redisTemplate.opsForList().remove(QUEUE_MEDIUM, 1, payload);
-		if (removedFromMedium != null && removedFromMedium > 0) {
-			return;
-		}
-
-		redisTemplate.opsForList().remove(QUEUE_LOW, 1, payload);
+		log.warn("Claim release skipped because payload was not found inflightQueue={} sourceQueue={}",
+				claim.inflightQueue(), claim.sourceQueue());
 	}
 
 	private String queueKey(String priority) {
@@ -339,18 +381,13 @@ public class DispatchEngine {
 				continue;
 			}
 
-			OSRMRoute route = osrmService.getRoute(ambulance.getLatitude(), ambulance.getLongitude(), 
-				emergency.getLat(), emergency.getLon());
-			
-			double eta;
-			if (route != null) {
-				eta = route.getDuration(); // Real road ETA in seconds
-			} else {
-				// Fallback to Haversine with estimated speed
-				double distance = calculateDistance(emergency.getLat(), emergency.getLon(), 
+			double haversineDistanceKm = calculateDistance(emergency.getLat(), emergency.getLon(),
 					ambulance.getLatitude(), ambulance.getLongitude());
-				eta = distance * 120; // ~30 km/h average speed
+			if (haversineDistanceKm > MAX_DISPATCH_RADIUS_KM) {
+				continue;
 			}
+
+			double eta = getEtaSecondsWithCache(ambulance, emergency, haversineDistanceKm);
 
 			if (eta < minEta) {
 				minEta = eta;
@@ -367,6 +404,36 @@ public class DispatchEngine {
 		}
 
 		return nearest;
+	}
+
+	private double getEtaSecondsWithCache(
+			AmbulanceLocationEvent ambulance,
+			EmergencyEvent emergency,
+			double fallbackDistanceKm) {
+		String cacheKey = buildRouteCacheKey(ambulance, emergency);
+		long now = System.currentTimeMillis();
+
+		RouteEstimate cached = routeEstimateCache.get(cacheKey);
+		if (cached != null && cached.expiresAtMs() > now) {
+			return cached.etaSeconds();
+		}
+
+		OSRMRoute route = osrmService.getRoute(
+				ambulance.getLatitude(),
+				ambulance.getLongitude(),
+				emergency.getLat(),
+				emergency.getLon());
+		double etaSeconds = route != null ? route.getDuration() : fallbackDistanceKm * 120;
+		routeEstimateCache.put(cacheKey, new RouteEstimate(etaSeconds, now + ROUTE_ESTIMATE_CACHE_TTL_MS));
+		return etaSeconds;
+	}
+
+	private String buildRouteCacheKey(AmbulanceLocationEvent ambulance, EmergencyEvent emergency) {
+		return ambulance.getAmbulanceId()
+				+ "|" + Math.round(ambulance.getLatitude() * 10000)
+				+ "|" + Math.round(ambulance.getLongitude() * 10000)
+				+ "|" + Math.round(emergency.getLat() * 10000)
+				+ "|" + Math.round(emergency.getLon() * 10000);
 	}
 
 	private boolean isLocationFresh(AmbulanceLocationEvent ambulance) {
@@ -460,6 +527,12 @@ public class DispatchEngine {
 			log.error("Failed to deserialize saved payload for requeue emergencyId={}", emergencyId, e);
 			meterRegistry.counter("dispatch.emergencies.requeue.lost.total").increment();
 		}
+	}
+
+	private record QueueClaim(String payload, String sourceQueue, String inflightQueue) {
+	}
+
+	private record RouteEstimate(double etaSeconds, long expiresAtMs) {
 	}
 
 }

@@ -1,6 +1,8 @@
 package com.vivek.tracking.service;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -74,9 +76,19 @@ public class TrackingCacheService {
 				return Map.of();
 			}
 
+			List<String> orderedAmbulanceIds = new ArrayList<>(ambulanceIds);
+			List<String> keys = orderedAmbulanceIds.stream()
+					.map(this::locationKey)
+					.toList();
+			List<String> payloads = redisTemplate.opsForValue().multiGet(keys);
+			if (payloads == null || payloads.isEmpty()) {
+				return Map.of();
+			}
+
 			Map<String, AmbulanceLocationEvent> result = new LinkedHashMap<>();
-			for (String ambulanceId : ambulanceIds) {
-				String payload = redisTemplate.opsForValue().get(locationKey(ambulanceId));
+			int index = 0;
+			for (String ambulanceId : orderedAmbulanceIds) {
+				String payload = payloads.get(index++);
 				if (payload == null) {
 					continue;
 				}

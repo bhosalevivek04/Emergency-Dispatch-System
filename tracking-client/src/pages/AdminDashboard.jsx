@@ -44,8 +44,7 @@ const AdminDashboard = () => {
   const [selectedEmergency, setSelectedEmergency] = useState(null);
   const [selectedAmbulance, setSelectedAmbulance] = useState(null);
   const [mapClickMode, setMapClickMode] = useState(false);
-  const emergencyPollRef = useRef(null);
-  const fleetPollRef = useRef(null);
+  const [showAdminTools, setShowAdminTools] = useState(false);
   const locationHandlerRef = useRef(null);
 
   /**
@@ -134,6 +133,44 @@ const AdminDashboard = () => {
     setSelectedEmergency(null);
   };
 
+  const applyEmergencyUpdate = useCallback((update) => {
+    if (!update?.emergencyId || !update?.status) {
+      return;
+    }
+    setEmergencies(prev => {
+      const idx = prev.findIndex(e => e.id === update.emergencyId || e.emergencyId === update.emergencyId);
+      if (update.status === 'COMPLETED') {
+        if (idx === -1) return prev;
+        const copy = [...prev];
+        copy.splice(idx, 1);
+        return copy;
+      }
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = {
+        ...next[idx],
+        status: update.status,
+        assignedAmbulanceId: update.ambulanceId ?? next[idx].assignedAmbulanceId,
+      };
+      return next;
+    });
+
+    if (update.ambulanceId) {
+      setAmbulances(prev => prev.map(amb => {
+        if (amb.id !== update.ambulanceId) {
+          return amb;
+        }
+        let nextStatus = amb.status;
+        if (update.status === 'ASSIGNED') {
+          nextStatus = 'ASSIGNED';
+        } else if (update.status === 'COMPLETED') {
+          nextStatus = 'AVAILABLE';
+        }
+        return { ...amb, status: nextStatus };
+      }));
+    }
+  }, []);
+
   /**
    * Connect to WebSocket and subscribe to real-time updates
    */
@@ -142,6 +179,7 @@ const AdminDashboard = () => {
 
     let unsubLocations;
     let reconnectTimeout;
+    let unsubEmergencies;
 
     const connectWebSocket = async () => {
       try {
@@ -153,7 +191,6 @@ const AdminDashboard = () => {
 
         // Subscribe to ambulance location updates (only real topic that exists)
         unsubLocations = wsService.subscribe('/topic/location', (update) => {
-          console.log('Received location update:', update);
           setAmbulances(prev => {
             const exists = prev.some(amb => amb.id === update.ambulanceId);
             if (!exists) {
@@ -185,6 +222,9 @@ const AdminDashboard = () => {
                 : amb
             );
           });
+        });
+        unsubEmergencies = wsService.subscribe('/topic/emergencies', (update) => {
+          applyEmergencyUpdate(update);
         });
 
         console.log('WebSocket subscriptions established');
@@ -220,11 +260,12 @@ const AdminDashboard = () => {
         clearTimeout(reconnectTimeout);
       }
       if (unsubLocations) unsubLocations();
+      if (unsubEmergencies) unsubEmergencies();
       wsService.disconnect();
       setWsConnected(false);
       setWsConnectionState('disconnected');
     };
-  }, [accessToken, showToast]);
+  }, [accessToken, showToast, applyEmergencyUpdate]);
 
   /**
    * Fetch initial data on mount
@@ -232,21 +273,6 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchEmergencies();
     fetchAmbulances(false);
-
-    // Poll emergencies so status transitions (ON_ROUTE/ARRIVED/COMPLETED)
-    // are reflected in queue without manual refresh.
-    emergencyPollRef.current = setInterval(fetchEmergencies, 15000);
-    // Poll fleet so status transitions are reflected even if WS payload has no status field.
-    fleetPollRef.current = setInterval(() => fetchAmbulances(true), 5000);
-
-    return () => {
-      if (emergencyPollRef.current) {
-        clearInterval(emergencyPollRef.current);
-      }
-      if (fleetPollRef.current) {
-        clearInterval(fleetPollRef.current);
-      }
-    };
   }, [fetchEmergencies, fetchAmbulances]);
 
   return (
@@ -337,9 +363,26 @@ const AdminDashboard = () => {
             <FleetStatusPanel ambulances={ambulances} />
           )}
 
-          {/* Admin-specific panels */}
-          <FleetManagementPanel />
-          <SystemHealthPanel />
+          {/* Admin tools toggle */}
+          <div className="metrics-link-panel">
+            <h2>Admin Tools</h2>
+            <p>Use advanced operational tools only when needed.</p>
+            <button
+              type="button"
+              className="grafana-link-button"
+              onClick={() => setShowAdminTools(prev => !prev)}
+            >
+              {showAdminTools ? 'Hide Admin Tools' : 'Show Admin Tools'}
+            </button>
+          </div>
+
+          {/* Admin-specific panels (collapsible) */}
+          {showAdminTools && (
+            <>
+              <FleetManagementPanel />
+              <SystemHealthPanel />
+            </>
+          )}
 
           {/* Grafana Metrics Link */}
           <div className="metrics-link-panel">

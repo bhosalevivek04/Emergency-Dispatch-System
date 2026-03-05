@@ -7,6 +7,8 @@ import org.springframework.web.client.RestTemplate;
 import com.vivek.dispatch.dto.OSRMResponse;
 import com.vivek.dispatch.dto.OSRMRoute;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,6 +22,8 @@ public class OSRMService {
 	@Value("${osrm.base-url:http://router.project-osrm.org}")
 	private String osrmBaseUrl;
 
+	@CircuitBreaker(name = "osrm", fallbackMethod = "fallbackRoute")
+	@Retry(name = "osrm", fallbackMethod = "fallbackRoute")
 	public OSRMRoute getRoute(double fromLat, double fromLon, double toLat, double toLon) {
 		try {
 			String url = String.format("%s/route/v1/driving/%f,%f;%f,%f?overview=false", 
@@ -39,5 +43,11 @@ public class OSRMService {
 				fromLat, fromLon, toLat, toLon);
 			return null;
 		}
+	}
+
+	private OSRMRoute fallbackRoute(double fromLat, double fromLon, double toLat, double toLon, Throwable throwable) {
+		log.warn("OSRM circuit fallback triggered from=({},{}) to=({},{}) reason={}",
+				fromLat, fromLon, toLat, toLon, throwable == null ? "unknown" : throwable.getMessage());
+		return null;
 	}
 }

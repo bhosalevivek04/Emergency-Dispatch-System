@@ -24,3 +24,8 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+
+notification:
+  webhook:
+    enabled: ${NOTIFICATION_WEBHOOK_ENABLED:false}
+    url: ${NOTIFICATION_WEBHOOK_URL:https://webhook.site/a1779324-048b-4492-bc3e-2fd3cef812f3}

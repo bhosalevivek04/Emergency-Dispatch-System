@@ -1,10 +1,10 @@
 package com.vivek.auth;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vivek.auth.dto.*;
-import com.vivek.auth.entity.User;
-import com.vivek.auth.repository.RefreshTokenRepository;
-import com.vivek.auth.repository.UserRepository;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,9 +16,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vivek.auth.dto.AuthResponse;
+import com.vivek.auth.dto.LoginRequest;
+import com.vivek.auth.dto.RefreshTokenRequest;
+import com.vivek.auth.dto.RegisterRequest;
+import com.vivek.auth.entity.User;
+import com.vivek.auth.repository.RefreshTokenRepository;
+import com.vivek.auth.repository.UserRepository;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -154,7 +159,7 @@ class AuthServiceIntegrationTest {
     }
 
     @Test
-    @DisplayName("Should refresh token successfully")
+    @DisplayName("Should refresh token successfully and rotate refresh token")
     void shouldRefreshTokenSuccessfully() throws Exception {
         // Register and get tokens
         RegisterRequest registerRequest = new RegisterRequest();
@@ -178,13 +183,26 @@ class AuthServiceIntegrationTest {
         RefreshTokenRequest refreshRequest = new RefreshTokenRequest();
         refreshRequest.setRefreshToken(authResponse.getRefreshToken());
 
-        mockMvc.perform(post("/auth/refresh")
+        MvcResult refreshResult = mockMvc.perform(post("/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(refreshRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").exists())
-                .andExpect(jsonPath("$.refreshToken").value(authResponse.getRefreshToken()))
-                .andExpect(jsonPath("$.username").value("refreshtest"));
+                .andExpect(jsonPath("$.refreshToken").exists())
+                .andExpect(jsonPath("$.username").value("refreshtest"))
+                .andReturn();
+
+        AuthResponse refreshResponse = objectMapper.readValue(
+                refreshResult.getResponse().getContentAsString(),
+                AuthResponse.class
+        );
+        assertThat(refreshResponse.getRefreshToken()).isNotEqualTo(authResponse.getRefreshToken());
+
+        // Old refresh token must fail after rotation
+        mockMvc.perform(post("/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshRequest)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

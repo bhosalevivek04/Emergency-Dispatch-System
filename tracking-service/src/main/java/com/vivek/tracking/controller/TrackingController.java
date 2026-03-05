@@ -1,7 +1,7 @@
 package com.vivek.tracking.controller;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.vivek.tracking.dto.AmbulanceLocationEvent;
 import com.vivek.tracking.service.TrackingCacheService;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -38,7 +41,10 @@ public class TrackingController {
 	}
 
 	// Rate limiting: Track last update time per ambulance
-	private final Map<String, Long> lastUpdateTime = new ConcurrentHashMap<>();
+	private final Cache<String, Long> lastUpdateTime = Caffeine.newBuilder()
+			.expireAfterWrite(1, TimeUnit.MINUTES)
+			.maximumSize(5000)
+			.build();
 	private static final long MIN_UPDATE_INTERVAL_MS = 2000; // 2 seconds minimum between updates
 
 	@GetMapping("/ambulances")
@@ -100,7 +106,7 @@ public class TrackingController {
 		// Rate limiting check
 		String ambulanceId = location.getAmbulanceId();
 		long currentTime = System.currentTimeMillis();
-		Long lastUpdate = lastUpdateTime.get(ambulanceId);
+		Long lastUpdate = lastUpdateTime.getIfPresent(ambulanceId);
 
 		if (lastUpdate != null && (currentTime - lastUpdate) < MIN_UPDATE_INTERVAL_MS) {
 			// Too frequent, but return success to avoid client errors
