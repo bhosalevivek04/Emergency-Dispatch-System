@@ -1,3 +1,8 @@
+.leaflet-container {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
 .map-select-mode,
 .map-select-mode .leaflet-container,
 .map-select-mode .leaflet-pane,
@@ -8,4 +13,9 @@
 .map-select-mode .leaflet-grab,
 .map-select-mode .leaflet-dragging {
   cursor: crosshair !important;
+}
+
+.map-select-mode .leaflet-container {
+  border-radius: inherit;
+  overflow: hidden;
 }

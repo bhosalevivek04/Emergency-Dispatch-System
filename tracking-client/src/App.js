@@ -6,6 +6,7 @@ import { useAuth } from './contexts/AuthContext';
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/RegisterPage'));
 const CitizenRequestPage = lazy(() => import('./pages/CitizenRequestPage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const DispatcherDashboard = lazy(() => import('./pages/DispatcherDashboard'));
 const DriverDashboard = lazy(() => import('./pages/DriverDashboard'));
@@ -16,7 +17,7 @@ function App() {
   // Helper function to get default dashboard route based on user role
   const getDefaultDashboard = () => {
     if (!isAuthenticated || !user) {
-      return '/login';
+      return '/';
     }
     
     if (user.roles?.includes('ADMIN')) {
@@ -33,6 +34,7 @@ function App() {
   return (
     <Suspense fallback={<div style={{ padding: '1rem' }}>Loading...</div>}>
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         {/* Login route */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -68,10 +70,7 @@ function App() {
           }
         />
 
-      {/* Default route - redirect to appropriate dashboard or login */}
-        <Route path="/" element={<Navigate to={getDefaultDashboard()} replace />} />
-
-      {/* Catch-all route - redirect to appropriate dashboard or login */}
+      {/* Catch-all route - redirect to appropriate dashboard or landing */}
         <Route path="*" element={<Navigate to={getDefaultDashboard()} replace />} />
       </Routes>
     </Suspense>

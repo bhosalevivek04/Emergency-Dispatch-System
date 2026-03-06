@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
-import PropTypes from 'prop-types';
 import './LoginPage.css';
 
 /**
@@ -121,6 +120,9 @@ const LoginPage = () => {
             Need an account? <Link to="/register">Register</Link>
           </p>
           <p className="auth-switch-text">
+            Want the overview first? <Link to="/">View Home</Link>
+          </p>
+          <p className="auth-switch-text">
             Need help now? <Link to="/citizen">Request Emergency</Link>
           </p>
         </div>
@@ -128,7 +130,5 @@ const LoginPage = () => {
     </div>
   );
 };
-
-LoginPage.propTypes = {};
 
 export default LoginPage;

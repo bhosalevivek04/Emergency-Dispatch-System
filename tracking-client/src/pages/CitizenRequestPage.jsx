@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CircleMarker, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import MapComponent from '../components/map/MapComponent';
@@ -464,19 +465,25 @@ const CitizenRequestPage = () => {
 
   return (
     <div className="citizen-page">
-      <header className="citizen-header">
-        <h1>Request Emergency Help</h1>
-        <p>Choose your location on map and submit request.</p>
-        {statusData?.emergencyId && (
-          <div className="citizen-connection-wrap">
-            <ConnectionStatus status={trackingConnectionState} />
+      <header className="citizen-navbar">
+        <div className="citizen-navbar-inner">
+          <div className="citizen-navbar-brand">
+            <div className="citizen-navbar-eyebrow">Public Emergency Intake</div>
+            <h1>Request Emergency Help</h1>
           </div>
-        )}
+          <div className="citizen-navbar-actions">
+            <Link to="/" className="citizen-navbar-link">← Back to Home</Link>
+            {statusData?.emergencyId && (
+              <div className="citizen-navbar-connection">
+                <ConnectionStatus status={trackingConnectionState} />
+              </div>
+            )}
+          </div>
+        </div>
       </header>
 
       <main className="citizen-content">
         <section className="citizen-map-section">
-          <div className="map-hint">Tap map to mark emergency location</div>
           <MapComponent
             center={mapCenter}
             zoom={mapZoom}
@@ -535,7 +542,18 @@ const CitizenRequestPage = () => {
           </MapComponent>
         </section>
 
-        <section className="citizen-form-section">
+        <section className="citizen-form-section" id="citizen-request-panel">
+          <div className="citizen-panel-header">
+            <h2>Request Details</h2>
+            <p>Submit a new emergency or track an existing request ID.</p>
+          </div>
+
+          {!selectedLocation && !statusData && (
+            <div className="map-hint-sidebar">
+              <p>💡 Tap on the map to mark the emergency location</p>
+            </div>
+          )}
+
           {selectedLocation && (
             <div className="selected-location-chip">
               Selected: {selectedLocation.lat.toFixed(5)}, {selectedLocation.lng.toFixed(5)}
@@ -574,7 +592,7 @@ const CitizenRequestPage = () => {
                 <option value="LOW">LOW</option>
               </select>
 
-              <label htmlFor="citizen-phone">Phone (optional)</label>
+              <label htmlFor="citizen-phone">Phone</label>
               <input
                 id="citizen-phone"
                 value={callerPhone}
@@ -583,7 +601,7 @@ const CitizenRequestPage = () => {
                 autoComplete="tel"
               />
 
-              <label htmlFor="citizen-description">Description (optional)</label>
+              <label htmlFor="citizen-description">Description</label>
               <textarea
                 id="citizen-description"
                 value={description}
