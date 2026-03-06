@@ -91,6 +91,8 @@ public class DispatchEngine {
 				emergency.getPriority(), emergency.getLat(), emergency.getLon());
 		emergencyQueuedCounter.increment();
 		enqueueEmergency(emergency);
+		// Keep the 1-second safety poller, but also kick the dispatcher immediately for new work.
+		scheduler.execute(this::dispatchNextEmergency);
 	}
 
 	public void handleAmbulanceUpdate(AmbulanceLocationEvent ambulance) {
@@ -120,7 +122,7 @@ public class DispatchEngine {
 
 			log.debug("Processing emergency emergencyId={} priority={}", emergency.getEmergencyId(), emergency.getPriority());
 
-			AmbulanceLocationEvent nearest = findNearestAvailable(emergency);
+			DispatchCandidate nearest = findNearestAvailable(emergency);
 			if (nearest == null) {
 				noAvailableAmbulanceCounter.increment();
 				log.warn("No ambulance available emergencyId={} knownAmbulances={} availableCount={}", 
@@ -130,7 +132,7 @@ public class DispatchEngine {
 				return;
 			}
 
-			String ambulanceId = nearest.getAmbulanceId();
+			String ambulanceId = nearest.ambulance().getAmbulanceId();
 			if (!acquireLock(ambulanceId)) {
 				lockAcquireFailureCounter.increment();
 				log.warn("Ambulance lock acquisition failed ambulanceId={} emergencyId={}", ambulanceId,
@@ -143,13 +145,8 @@ public class DispatchEngine {
 			try {
 				Timer.Sample publishTimer = Timer.start(meterRegistry);
 				long assignmentVersion = getVersion(ambulanceId);
-
-				OSRMRoute route = osrmService.getRoute(nearest.getLatitude(), nearest.getLongitude(), 
-					emergency.getLat(), emergency.getLon());
-				
-				double distanceKm = route != null ? route.getDistance() / 1000.0 : 
-					calculateDistance(emergency.getLat(), emergency.getLon(), nearest.getLatitude(), nearest.getLongitude());
-				double etaSeconds = route != null ? route.getDuration() : distanceKm * 120; // fallback: ~30 km/h
+				double distanceKm = nearest.distanceKm();
+				double etaSeconds = nearest.routeEstimate().etaSeconds();
 				
 				AssignmentEvent assignment = new AssignmentEvent(emergency.getEmergencyId(), ambulanceId, 
 					distanceKm, assignmentVersion, emergency.getLat(), emergency.getLon());
@@ -178,7 +175,7 @@ public class DispatchEngine {
 
 				log.info(
 						"Assignment published emergencyId={} ambulanceId={} priority={} distanceKm={} etaMin={} version={}",
-						emergency.getEmergencyId(), nearest.getAmbulanceId(), emergency.getPriority(), 
+						emergency.getEmergencyId(), nearest.ambulance().getAmbulanceId(), emergency.getPriority(), 
 						String.format("%.2f", distanceKm), String.format("%.1f", etaSeconds / 60.0), assignmentVersion);
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
@@ -361,8 +358,8 @@ public class DispatchEngine {
 		return "lock:ambulance:" + ambulanceId;
 	}
 
-	private AmbulanceLocationEvent findNearestAvailable(EmergencyEvent emergency) {
-		AmbulanceLocationEvent nearest = null;
+	private DispatchCandidate findNearestAvailable(EmergencyEvent emergency) {
+		DispatchCandidate nearest = null;
 		double minEta = Double.MAX_VALUE;
 
 		log.debug("Finding nearest ambulance for emergency emergencyId={} totalAmbulances={}", 
@@ -387,11 +384,12 @@ public class DispatchEngine {
 				continue;
 			}
 
-			double eta = getEtaSecondsWithCache(ambulance, emergency, haversineDistanceKm);
+			RouteEstimate routeEstimate = getRouteEstimateWithCache(ambulance, emergency, haversineDistanceKm);
+			double eta = routeEstimate.etaSeconds();
 
 			if (eta < minEta) {
 				minEta = eta;
-				nearest = ambulance;
+				nearest = new DispatchCandidate(ambulance, haversineDistanceKm, routeEstimate);
 			}
 		}
 
@@ -400,13 +398,13 @@ public class DispatchEngine {
 				emergency.getEmergencyId(), ambulanceState.size());
 		} else {
 			log.debug("Found nearest ambulance emergencyId={} ambulanceId={} eta={}s", 
-				emergency.getEmergencyId(), nearest.getAmbulanceId(), minEta);
+				emergency.getEmergencyId(), nearest.ambulance().getAmbulanceId(), minEta);
 		}
 
 		return nearest;
 	}
 
-	private double getEtaSecondsWithCache(
+	private RouteEstimate getRouteEstimateWithCache(
 			AmbulanceLocationEvent ambulance,
 			EmergencyEvent emergency,
 			double fallbackDistanceKm) {
@@ -415,7 +413,7 @@ public class DispatchEngine {
 
 		RouteEstimate cached = routeEstimateCache.get(cacheKey);
 		if (cached != null && cached.expiresAtMs() > now) {
-			return cached.etaSeconds();
+			return cached;
 		}
 
 		OSRMRoute route = osrmService.getRoute(
@@ -423,9 +421,11 @@ public class DispatchEngine {
 				ambulance.getLongitude(),
 				emergency.getLat(),
 				emergency.getLon());
+		double distanceKm = route != null ? route.getDistance() / 1000.0 : fallbackDistanceKm;
 		double etaSeconds = route != null ? route.getDuration() : fallbackDistanceKm * 120;
-		routeEstimateCache.put(cacheKey, new RouteEstimate(etaSeconds, now + ROUTE_ESTIMATE_CACHE_TTL_MS));
-		return etaSeconds;
+		RouteEstimate routeEstimate = new RouteEstimate(distanceKm, etaSeconds, now + ROUTE_ESTIMATE_CACHE_TTL_MS);
+		routeEstimateCache.put(cacheKey, routeEstimate);
+		return routeEstimate;
 	}
 
 	private String buildRouteCacheKey(AmbulanceLocationEvent ambulance, EmergencyEvent emergency) {
@@ -532,7 +532,13 @@ public class DispatchEngine {
 	private record QueueClaim(String payload, String sourceQueue, String inflightQueue) {
 	}
 
-	private record RouteEstimate(double etaSeconds, long expiresAtMs) {
+	private record DispatchCandidate(
+			AmbulanceLocationEvent ambulance,
+			double distanceKm,
+			RouteEstimate routeEstimate) {
+	}
+
+	private record RouteEstimate(double distanceKm, double etaSeconds, long expiresAtMs) {
 	}
 
 }
