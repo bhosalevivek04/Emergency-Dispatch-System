@@ -118,12 +118,12 @@
 }
 
 .landing-btn-primary {
-  background: #dc2626;
-  color: #ffffff;
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
 }
 
 .landing-btn-primary:hover {
-  background: #b91c1c;
+  background-color: #c0392b !important;
 }
 
 .landing-btn-secondary {
