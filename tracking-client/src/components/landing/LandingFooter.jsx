@@ -52,7 +52,7 @@ function LandingFooter() {
         </div>
 
         <div className="landing-footer-bottom">
-          <p>© 2026 Emergency Dispatch System.</p>
+          <p>© {new Date().getFullYear()} Emergency Dispatch System.</p>
           <div className="landing-footer-bottom-links">
             <a href="https://github.com/bhosalevivek04/Emergency-Dispatch-System" target="_blank" rel="noreferrer">
               View on GitHub

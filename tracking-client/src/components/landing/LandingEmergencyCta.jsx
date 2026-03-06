@@ -18,10 +18,10 @@ function LandingEmergencyCta() {
             <div className="landing-cta-card-copy">Get immediate ambulance dispatch</div>
           </Link>
 
-          <Link to="/citizen" className="landing-cta-card secondary">
+          <Link to="/citizen?track=true" className="landing-cta-card secondary">
             <MapPin className="landing-icon-lg" />
             <div className="landing-cta-card-title">Track Existing Request</div>
-            <div className="landing-cta-card-copy">Monitor your ambulance in real time</div>
+            <div className="landing-cta-card-copy">Enter your ID to monitor ambulance in real time</div>
           </Link>
 
           <a href="tel:911" className="landing-cta-card secondary">

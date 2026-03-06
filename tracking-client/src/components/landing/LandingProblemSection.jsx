@@ -32,8 +32,8 @@ function LandingProblemSection() {
           <p>Current emergency dispatch systems face critical challenges that can cost lives.</p>
           <div className="landing-alert-box">
             <p>
-              <span>Critical Fact:</span> Every minute without medical response during cardiac arrest
-              reduces survival chances.
+              <span>Critical Fact:</span> Cardiac arrest survival drops 10% for every minute without intervention. 
+              Most ambulances take 8–15 minutes to arrive.
             </p>
           </div>
         </div>

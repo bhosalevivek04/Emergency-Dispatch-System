@@ -175,9 +175,8 @@
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(to right, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.78)),
-    url("https://images.unsplash.com/photo-1597188558265-f0fb7428a243?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600")
-      center/cover no-repeat;
+    linear-gradient(135deg, rgba(220, 38, 38, 0.08) 0%, rgba(255, 255, 255, 0.95) 50%),
+    linear-gradient(to right, #f8fafc, #e2e8f0);
 }
 
 .landing-hero-overlay {
@@ -646,6 +645,25 @@
   color: #9ca3af;
 }
 
+.landing-dashboard-auth-badge {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+}
+
+.landing-auth-lock-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
 .landing-demo-video {
   position: relative;
   margin-top: 4rem;
@@ -654,8 +672,7 @@
   overflow: hidden;
   background:
     linear-gradient(135deg, rgba(17, 24, 39, 0.78), rgba(31, 41, 55, 0.78)),
-    url("https://images.unsplash.com/photo-1759802524049-2421ddaee0fe?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600")
-      center/cover no-repeat;
+    linear-gradient(to right, #1f2937, #374151);
   box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
 }
 
@@ -796,6 +813,41 @@
 }
 
 @media (max-width: 768px) {
+  /* Mobile vertical timeline connector */
+  .landing-timeline {
+    position: relative;
+    padding-left: 1rem;
+  }
+
+  .landing-timeline::before {
+    content: '';
+    position: absolute;
+    left: 0.75rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 2px;
+    background: #fecaca;
+  }
+
+  .landing-step-card {
+    position: relative;
+    padding-left: 1.5rem;
+    text-align: left;
+  }
+
+  .landing-step-card::before {
+    content: '';
+    position: absolute;
+    left: -0.375rem;
+    top: 1.5rem;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+    background: #dc2626;
+    border: 3px solid #ffffff;
+    box-shadow: 0 0 0 2px #dc2626;
+  }
+
   .landing-container {
     width: min(100% - 24px, 1280px);
   }
@@ -811,6 +863,12 @@
 
   .mobile-nav {
     display: inline-flex;
+  }
+
+  @media (min-width: 769px) {
+    .landing-mobile-toggle {
+      display: none !important;
+    }
   }
 
   .landing-hero-section {
@@ -841,4 +899,120 @@
   .landing-hero-actions .landing-btn {
     width: 100%;
   }
+
+  .landing-track-form {
+    flex-direction: column;
+  }
+
+  .landing-track-info {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Landing Track Section */
+.landing-track-form-wrapper {
+  max-width: 32rem;
+  margin: 0 auto 3rem;
+}
+
+.landing-track-form {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.landing-track-input-group {
+  position: relative;
+  flex: 1;
+}
+
+.landing-track-input-icon {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.25rem;
+  height: 1.25rem;
+  color: #9ca3af;
+}
+
+.landing-track-input {
+  width: 100%;
+  padding: 1rem 1rem 1rem 3rem;
+  font-size: 1rem;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.landing-track-input:focus {
+  border-color: #dc2626;
+}
+
+.landing-track-btn {
+  padding: 1rem 1.5rem;
+  background: #dc2626;
+  color: #ffffff;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  white-space: nowrap;
+}
+
+.landing-track-btn:hover:not(:disabled) {
+  background: #c0392b;
+}
+
+.landing-track-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.landing-track-error {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.5rem;
+  color: #dc2626;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.landing-track-info {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.landing-track-info-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: #f9fafb;
+  border-radius: 1rem;
+  text-align: left;
+}
+
+.landing-track-info-icon {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: #dc2626;
+}
+
+.landing-track-info-item strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: #111827;
+  font-weight: 600;
+}
+
+.landing-track-info-item span {
+  color: #6b7280;
+  font-size: 0.9rem;
 }

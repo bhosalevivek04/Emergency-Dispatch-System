@@ -32,8 +32,8 @@ function LandingHero() {
               <span>Available</span>
             </div>
             <div>
-              <strong>&lt;60s</strong>
-              <span>Dispatch Trigger</span>
+              <strong>{'<1s'}</strong>
+              <span>Auto-Dispatch</span>
             </div>
             <div>
               <strong>Real-time</strong>
@@ -47,3 +47,4 @@ function LandingHero() {
 }
 
 export default LandingHero;
+

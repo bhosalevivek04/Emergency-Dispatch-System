@@ -2,11 +2,12 @@ const technologies = [
   { name: 'Java', icon: '☕', className: 'red' },
   { name: 'Spring Boot', icon: '🍃', className: 'green' },
   { name: 'Apache Kafka', icon: '⚡', className: 'dark' },
-  { name: 'Redis', icon: '⚡', className: 'red' },
+  { name: 'Redis', icon: '🔴', className: 'red' },
   { name: 'PostgreSQL', icon: '🐘', className: 'blue' },
   { name: 'React', icon: '⚛️', className: 'sky' },
   { name: 'Docker', icon: '🐳', className: 'sky' },
   { name: 'WebSocket', icon: '🔌', className: 'purple' },
+  { name: 'OSRM', icon: '🗺️', className: 'green' },
 ];
 
 function LandingTechStack() {

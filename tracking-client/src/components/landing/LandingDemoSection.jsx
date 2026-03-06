@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { User, Radio, Truck, Settings } from 'lucide-react';
+import { User, Radio, Truck, Settings, Lock } from 'lucide-react';
 
 const dashboards = [
   {
@@ -8,6 +8,7 @@ const dashboards = [
     description: 'Request emergencies and track ambulances in real time.',
     link: '/citizen',
     tone: 'blue',
+    requiresAuth: false,
   },
   {
     icon: Radio,
@@ -15,6 +16,7 @@ const dashboards = [
     description: 'Monitor emergencies and manage operational response.',
     link: '/dashboard/dispatcher',
     tone: 'green',
+    requiresAuth: true,
   },
   {
     icon: Truck,
@@ -22,6 +24,7 @@ const dashboards = [
     description: 'View assigned emergencies and navigate to locations.',
     link: '/dashboard/driver',
     tone: 'orange',
+    requiresAuth: true,
   },
   {
     icon: Settings,
@@ -29,6 +32,7 @@ const dashboards = [
     description: 'Manage configuration, users, and visibility across the system.',
     link: '/dashboard/admin',
     tone: 'purple',
+    requiresAuth: true,
   },
 ];
 
@@ -42,7 +46,7 @@ function LandingDemoSection() {
         </div>
 
         <div className="landing-card-grid landing-card-grid-4">
-          {dashboards.map(({ icon: Icon, title, description, link, tone }) => (
+          {dashboards.map(({ icon: Icon, title, description, link, tone, requiresAuth }) => (
             <Link key={title} to={link} className={`landing-dashboard-card ${tone}`}>
               <div className="landing-dashboard-icon">
                 <Icon className="landing-icon-lg white" />
@@ -50,6 +54,11 @@ function LandingDemoSection() {
               <h3>{title}</h3>
               <p>{description}</p>
               <span>View Dashboard →</span>
+              {requiresAuth && (
+                <div className="landing-dashboard-auth-badge" title="Staff login required">
+                  <Lock className="landing-auth-lock-icon" />
+                </div>
+              )}
             </Link>
           ))}
         </div>
