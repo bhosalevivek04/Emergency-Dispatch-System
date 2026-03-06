@@ -28,7 +28,7 @@ const LoginPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Basic validation
     if (!formState.username || !formState.password) {
       setFormState(prev => ({
@@ -53,15 +53,15 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="login-page">
-      <div className="login-container">
-        <div className="login-card">
-          <h1 className="login-title">Emergency Dispatch System</h1>
-          <p className="login-subtitle">Sign in to continue</p>
+    <div className="auth-page">
+      <div className="auth-container">
+        <div className="auth-card">
+          <h1 className="auth-title">Welcome Back</h1>
+          <p className="auth-subtitle">Sign in to access your dashboard</p>
 
-          <form onSubmit={handleSubmit} className="login-form">
-            <div className="form-group">
-              <label htmlFor="username" className="form-label">
+          <form onSubmit={handleSubmit} className="auth-form">
+            <div className="auth-form-group">
+              <label htmlFor="username" className="auth-form-label">
                 Username
               </label>
               <input
@@ -71,14 +71,14 @@ const LoginPage = () => {
                 value={formState.username}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
+                className="auth-form-input"
                 placeholder="Enter your username"
                 autoComplete="username"
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="password" className="form-label">
+            <div className="auth-form-group">
+              <label htmlFor="password" className="auth-form-label">
                 Password
               </label>
               <input
@@ -88,14 +88,14 @@ const LoginPage = () => {
                 value={formState.password}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
+                className="auth-form-input"
                 placeholder="Enter your password"
                 autoComplete="current-password"
               />
             </div>
 
             {formState.error && (
-              <div className="error-message" role="alert">
+              <div className="auth-error" role="alert">
                 {formState.error}
               </div>
             )}
@@ -103,10 +103,10 @@ const LoginPage = () => {
             <button
               type="submit"
               disabled={formState.isLoading}
-              className="submit-button"
+              className="auth-submit-btn"
             >
               {formState.isLoading ? (
-                <span className="button-content">
+                <span className="auth-button-content">
                   <LoadingSpinner size="small" />
                   <span>Signing in...</span>
                 </span>
@@ -116,14 +116,20 @@ const LoginPage = () => {
             </button>
           </form>
 
-          <p className="auth-switch-text">
+          <p className="auth-switch">
             Need an account? <Link to="/register">Register</Link>
           </p>
-          <p className="auth-switch-text">
-            Want the overview first? <Link to="/">View Home</Link>
-          </p>
-          <p className="auth-switch-text">
-            Need help now? <Link to="/citizen">Request Emergency</Link>
+
+          <div className="auth-divider">
+            <span>or</span>
+          </div>
+
+          <Link to="/citizen" className="auth-emergency-link">
+            Request Emergency (Citizen View)
+          </Link>
+
+          <p className="auth-home-link">
+            <Link to="/">← Back to Home</Link>
           </p>
         </div>
       </div>

@@ -32,7 +32,7 @@ function LandingHero() {
               <span>Available</span>
             </div>
             <div>
-              <strong>{'<1s'}</strong>
+              <strong>{'<10s'}</strong>
               <span>Auto-Dispatch</span>
             </div>
             <div>

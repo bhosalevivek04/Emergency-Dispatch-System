@@ -73,10 +73,10 @@ const RegisterPage = () => {
       setFormState((prev) => ({
         ...prev,
         isLoading: false,
-        success: 'Registration successful. Please sign in.',
+        success: 'Registration successful! Redirecting to login...',
       }));
 
-      setTimeout(() => navigate('/login'), 900);
+      setTimeout(() => navigate('/login'), 2000);
     } catch (error) {
       setFormState((prev) => ({
         ...prev,
@@ -86,16 +86,17 @@ const RegisterPage = () => {
     }
   };
 
-  return (
-    <div className="login-page">
-      <div className="login-container">
-        <div className="login-card">
-          <h1 className="login-title">Create Account</h1>
-          <p className="login-subtitle">Register as Dispatcher or Driver</p>
 
-          <form onSubmit={handleSubmit} className="login-form">
-            <div className="form-group">
-              <label htmlFor="username" className="form-label">Username</label>
+  return (
+    <div className="auth-page">
+      <div className="auth-container">
+        <div className="auth-card">
+          <h1 className="auth-title">Create Account</h1>
+          <p className="auth-subtitle">Join the emergency response team</p>
+
+          <form onSubmit={handleSubmit} className="auth-form">
+            <div className="auth-form-group">
+              <label htmlFor="username" className="auth-form-label">Username</label>
               <input
                 type="text"
                 id="username"
@@ -103,13 +104,13 @@ const RegisterPage = () => {
                 value={formState.username}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
-                placeholder="Enter username"
+                className="auth-form-input"
+                placeholder="Choose a username"
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="email" className="form-label">Email</label>
+            <div className="auth-form-group">
+              <label htmlFor="email" className="auth-form-label">Email</label>
               <input
                 type="email"
                 id="email"
@@ -117,13 +118,13 @@ const RegisterPage = () => {
                 value={formState.email}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
-                placeholder="Enter email"
+                className="auth-form-input"
+                placeholder="Enter your email"
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="password" className="form-label">Password</label>
+            <div className="auth-form-group">
+              <label htmlFor="password" className="auth-form-label">Password</label>
               <input
                 type="password"
                 id="password"
@@ -131,21 +132,21 @@ const RegisterPage = () => {
                 value={formState.password}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
+                className="auth-form-input"
                 placeholder="Minimum 8 characters"
                 autoComplete="new-password"
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="role" className="form-label">Role</label>
+            <div className="auth-form-group">
+              <label htmlFor="role" className="auth-form-label">Role</label>
               <select
                 id="role"
                 name="role"
                 value={formState.role}
                 onChange={handleInputChange}
                 disabled={formState.isLoading}
-                className="form-input"
+                className="auth-form-select"
               >
                 <option value="DISPATCHER">Dispatcher</option>
                 <option value="AMBULANCE_DRIVER">Ambulance Driver</option>
@@ -153,8 +154,8 @@ const RegisterPage = () => {
             </div>
 
             {formState.role === 'AMBULANCE_DRIVER' && (
-              <div className="form-group">
-                <label htmlFor="ambulanceId" className="form-label">Ambulance ID</label>
+              <div className="auth-form-group">
+                <label htmlFor="ambulanceId" className="auth-form-label">Ambulance ID</label>
                 <input
                   type="text"
                   id="ambulanceId"
@@ -162,7 +163,7 @@ const RegisterPage = () => {
                   value={formState.ambulanceId}
                   onChange={handleInputChange}
                   disabled={formState.isLoading}
-                  className="form-input"
+                  className="auth-form-input"
                   placeholder="e.g. AMB-001"
                   required={formState.role === 'AMBULANCE_DRIVER'}
                 />
@@ -170,27 +171,31 @@ const RegisterPage = () => {
             )}
 
             {formState.error && (
-              <div className="error-message" role="alert">{formState.error}</div>
+              <div className="auth-error" role="alert">{formState.error}</div>
             )}
 
             {formState.success && (
-              <div className="success-message" role="status">{formState.success}</div>
+              <div className="auth-success" role="status">{formState.success}</div>
             )}
 
-            <button type="submit" disabled={formState.isLoading} className="submit-button">
+            <button type="submit" disabled={formState.isLoading} className="auth-submit-btn">
               {formState.isLoading ? (
-                <span className="button-content">
+                <span className="auth-button-content">
                   <LoadingSpinner size="small" />
                   <span>Creating account...</span>
                 </span>
               ) : (
-                'Register'
+                'Create Account'
               )}
             </button>
           </form>
 
-          <p className="auth-switch-text">
+          <p className="auth-switch">
             Already have an account? <Link to="/login">Sign In</Link>
+          </p>
+
+          <p className="auth-home-link">
+            <Link to="/">← Back to Home</Link>
           </p>
         </div>
       </div>
