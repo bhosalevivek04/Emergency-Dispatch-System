@@ -1,23 +1,27 @@
 # Emergency Dispatch System
 
-Production-grade, microservices-based emergency response platform for rapid ambulance dispatch, real-time tracking, and citizen-facing emergency request UX.
+A production-grade microservices-based emergency response platform for rapid ambulance dispatch, real-time tracking, and emergency request management.
 
-## Pitch Summary
+## Table of Contents
 
-Emergency Dispatch System reduces ambulance response latency by combining:
-- priority-aware dispatch automation,
-- real-time fleet telemetry,
-- resilient event-driven architecture,
-- and a citizen request + live tracking experience.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [Key Features](#key-features)
+- [System Design](#system-design)
+- [Getting Started](#getting-started)
+- [API Endpoints](#api-endpoints)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Technical Highlights](#technical-highlights)
 
-It is designed for demo-to-production progression with observability, fail-safes, and operational guardrails.
+## Overview
 
-## Core Value
-
-- Faster assignment: nearest available ambulance selection with routing.
-- Better reliability: outbox, idempotency, retry/circuit-breaker patterns.
-- Better transparency: dispatcher + citizen views with live status/timeline.
-- Production-ready ops: health probes, startup dependency checks, metrics, correlation IDs.
+Emergency Dispatch System is a comprehensive solution that reduces ambulance response time through:
+- Automated priority-based dispatch
+- Real-time fleet tracking and management
+- Event-driven microservices architecture
+- Resilient and scalable design patterns
 
 ## Architecture
 
@@ -32,27 +36,26 @@ graph TB
     end
 
     subgraph "API Layer"
-        Gateway[API Gateway :8080<br/>JWT Auth, Rate Limiting<br/>Correlation ID]
+        Gateway[API Gateway :8080<br/>JWT Auth, Rate Limiting]
     end
 
     subgraph "Microservices"
-        Auth[Auth Service :8086<br/>JWT RS256, Token Rotation]
-        Emergency[Emergency Service :8081<br/>Lifecycle Management]
-        Dispatch[Dispatch Service :8083<br/>Priority Queue & Assignment]
-        Ambulance[Ambulance Service :8082<br/>Fleet State Machine]
-        Tracking[Tracking Service :8085<br/>Location & WebSocket]
-        Notification[Notification Service :8084<br/>Webhook Integration]
+        Auth[Auth Service :8086]
+        Emergency[Emergency Service :8081]
+        Dispatch[Dispatch Service :8083]
+        Ambulance[Ambulance Service :8082]
+        Tracking[Tracking Service :8085]
+        Notification[Notification Service :8084]
     end
 
     subgraph "Data Layer"
-        Postgres[(PostgreSQL<br/>Persistent Data)]
-        Redis[(Redis<br/>State & Queues)]
-        Kafka[Kafka<br/>Event Backbone]
+        Postgres[(PostgreSQL)]
+        Redis[(Redis)]
+        Kafka[Kafka]
     end
 
-    subgraph "External Services"
-        OSRM[OSRM<br/>Routing Engine]
-        Webhook[Webhook.site<br/>Notifications]
+    subgraph "External"
+        OSRM[OSRM Routing]
     end
 
     Citizen --> Gateway
@@ -78,19 +81,8 @@ graph TB
     
     Tracking --> Redis
     Tracking -.WebSocket.-> Citizen
-    Tracking -.WebSocket.-> Dispatcher
-    Tracking -.WebSocket.-> Admin
     
     Notification --> Kafka
-    Notification --> Webhook
-
-    style Citizen fill:#e1f5ff
-    style Dispatcher fill:#e1f5ff
-    style Admin fill:#e1f5ff
-    style Gateway fill:#fff4e6
-    style Kafka fill:#ffe6e6
-    style Redis fill:#ffe6e6
-    style Postgres fill:#ffe6e6
 ```
 
 ### Emergency Request Flow
@@ -98,115 +90,33 @@ graph TB
 ```mermaid
 sequenceDiagram
     actor Citizen
-    participant Frontend as Citizen App
     participant Gateway as API Gateway
     participant Emergency as Emergency Service
-    participant DB as PostgreSQL
     participant Kafka
     participant Dispatch as Dispatch Service
-    participant Redis
-    participant OSRM
     participant Ambulance as Ambulance Service
     participant Tracking as Tracking Service
-    participant WS as WebSocket
 
-    Citizen->>Frontend: Select location & submit
-    Frontend->>Gateway: POST /api/emergencies/public
+    Citizen->>Gateway: POST /api/emergencies/public
     Gateway->>Emergency: Create emergency
-    Emergency->>DB: Save emergency (PENDING)
-    Emergency->>Kafka: Publish EmergencyCreated event
-    Emergency-->>Frontend: Return emergency ID
+    Emergency->>Kafka: Publish EmergencyCreated
+    Emergency-->>Citizen: Return emergency ID
     
-    Kafka->>Dispatch: Consume EmergencyCreated
-    Dispatch->>Redis: Add to priority queue
-    Dispatch->>Redis: Get available ambulances
-    Dispatch->>OSRM: Calculate routes & distances
-    OSRM-->>Dispatch: Return optimal route
-    Dispatch->>Redis: Lock ambulance (atomic)
-    Dispatch->>Kafka: Publish EmergencyAssigned event
+    Kafka->>Dispatch: Consume event
+    Dispatch->>Dispatch: Calculate nearest ambulance
+    Dispatch->>Kafka: Publish EmergencyAssigned
     
-    Kafka->>Emergency: Update status (ASSIGNED)
-    Emergency->>DB: Update emergency
-    
+    Kafka->>Emergency: Update status
     Kafka->>Ambulance: Assign ambulance
-    Ambulance->>DB: Update ambulance state
-    Ambulance->>Redis: Update fleet state
-    
-    Kafka->>Tracking: Broadcast assignment
-    Tracking->>WS: Push update to clients
-    WS-->>Frontend: Real-time status update
-    
-    loop Every 5 seconds
-        Ambulance->>Tracking: Send location update
-        Tracking->>Redis: Store location
-        Tracking->>WS: Broadcast to clients
-        WS-->>Frontend: Update ambulance position
-        Frontend->>OSRM: Fetch updated route
-        OSRM-->>Frontend: Return route with ETA
-    end
-```
-
-### Microservices Architecture Details
-
-```mermaid
-graph LR
-    subgraph "Emergency Service :8081"
-        E1[REST Controllers]
-        E2[Emergency Repository]
-        E3[Outbox Pattern]
-        E4[Kafka Producer]
-        E1 --> E2
-        E2 --> E3
-        E3 --> E4
-    end
-
-    subgraph "Dispatch Service :8083"
-        D1[Kafka Consumer]
-        D2[Priority Queue Manager]
-        D3[Assignment Engine]
-        D4[OSRM Client<br/>Circuit Breaker]
-        D5[Redis Lock Manager]
-        D1 --> D2
-        D2 --> D3
-        D3 --> D4
-        D3 --> D5
-    end
-
-    subgraph "Ambulance Service :8082"
-        A1[State Machine<br/>FSM]
-        A2[Movement Simulator]
-        A3[Auto-Heal Logic]
-        A4[Fleet Repository]
-        A1 --> A2
-        A1 --> A3
-        A1 --> A4
-    end
-
-    subgraph "Tracking Service :8085"
-        T1[Location Ingestion]
-        T2[Redis Cache]
-        T3[WebSocket Handler]
-        T4[STOMP Broker]
-        T1 --> T2
-        T2 --> T3
-        T3 --> T4
-    end
-
-    E4 -.Kafka.-> D1
-    D3 -.Kafka.-> A1
-    A2 --> T1
-
-    style E3 fill:#ffd700
-    style D4 fill:#ffd700
-    style A1 fill:#ffd700
-    style T4 fill:#ffd700
+    Kafka->>Tracking: Broadcast update
+    Tracking->>Citizen: WebSocket notification
 ```
 
 ### Ambulance State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> AVAILABLE: Fleet Initialization
+    [*] --> AVAILABLE
     
     AVAILABLE --> ASSIGNED: Emergency Assigned
     ASSIGNED --> ON_ROUTE: Start Movement
@@ -214,380 +124,116 @@ stateDiagram-v2
     ARRIVED --> COMPLETED: Complete Service
     COMPLETED --> AVAILABLE: Ready for Next
     
-    ASSIGNED --> AVAILABLE: Assignment Cancelled
-    ON_ROUTE --> AVAILABLE: Emergency Cancelled
-    
-    note right of AVAILABLE
-        Auto-heal checks for
-        stuck states every 30s
-    end note
-    
-    note right of ASSIGNED
-        Redis atomic lock
-        prevents double assignment
-    end note
+    ASSIGNED --> AVAILABLE: Cancelled
+    ON_ROUTE --> AVAILABLE: Cancelled
 ```
 
-### Data Flow Architecture
+## Technology Stack
 
-```mermaid
-flowchart TD
-    subgraph "Write Path"
-        W1[Client Request] --> W2[API Gateway]
-        W2 --> W3[Service Layer]
-        W3 --> W4[PostgreSQL Write]
-        W3 --> W5[Outbox Table]
-        W5 --> W6[Kafka Producer]
-        W6 --> W7[Event Bus]
-    end
+### Backend
+- **Framework**: Spring Boot 3.x
+- **Security**: Spring Security with JWT (RS256)
+- **Data Access**: Spring Data JPA
+- **Messaging**: Spring Kafka
+- **Real-time**: WebSocket with STOMP
+- **API Gateway**: Spring Cloud Gateway
 
-    subgraph "Read Path"
-        R1[Client Query] --> R2[API Gateway]
-        R2 --> R3[Service Layer]
-        R3 --> R4{Cache Hit?}
-        R4 -->|Yes| R5[Redis Cache]
-        R4 -->|No| R6[PostgreSQL Read]
-        R6 --> R7[Update Cache]
-        R7 --> R5
-    end
-
-    subgraph "Real-time Path"
-        RT1[Location Update] --> RT2[Tracking Service]
-        RT2 --> RT3[Redis Pub/Sub]
-        RT3 --> RT4[WebSocket Broadcast]
-        RT4 --> RT5[Connected Clients]
-    end
-
-    W7 -.Event.-> RT2
-
-    style W5 fill:#ffd700
-    style R5 fill:#90EE90
-    style RT4 fill:#87CEEB
-```
-
-### Security Architecture
-
-```mermaid
-flowchart LR
-    subgraph "Authentication Flow"
-        A1[Login Request] --> A2[Auth Service]
-        A2 --> A3{Credentials Valid?}
-        A3 -->|Yes| A4[Generate JWT<br/>RS256]
-        A4 --> A5[Access Token<br/>15 min]
-        A4 --> A6[Refresh Token<br/>7 days]
-        A3 -->|No| A7[401 Unauthorized]
-    end
-
-    subgraph "Authorization Flow"
-        B1[API Request<br/>+ JWT] --> B2[API Gateway]
-        B2 --> B3{Token Valid?}
-        B3 -->|Yes| B4{Role Check}
-        B4 -->|Authorized| B5[Forward to Service]
-        B4 -->|Forbidden| B6[403 Forbidden]
-        B3 -->|No| B7[401 Unauthorized]
-    end
-
-    subgraph "Rate Limiting"
-        C1[Request] --> C2[Redis Counter]
-        C2 --> C3{Limit Exceeded?}
-        C3 -->|Yes| C4[429 Too Many Requests]
-        C3 -->|No| C5[Process Request]
-    end
-
-    A5 --> B1
-    B5 --> C1
-
-    style A4 fill:#ffd700
-    style B2 fill:#ffd700
-    style C2 fill:#90EE90
-```
-
-### Deployment Architecture
-
-```mermaid
-graph TB
-    subgraph "Docker Compose Environment"
-        subgraph "Application Services"
-            GW[api-gateway:8080]
-            AS[auth-service:8086]
-            ES[emergency-service:8081]
-            DS[dispatch-service:8083]
-            AMS[ambulance-service:8082]
-            TS[tracking-service:8085]
-            NS[notification-service:8084]
-        end
-
-        subgraph "Infrastructure Services"
-            PG[(postgres:5432)]
-            RD[(redis:6379)]
-            KF[kafka:9092<br/>zookeeper:2181]
-            OS[osrm-pune:5000]
-        end
-
-        subgraph "Monitoring Stack"
-            PR[Prometheus:9090]
-            GR[Grafana:3001]
-        end
-
-        subgraph "Frontend"
-            FE[React App:3002]
-        end
-    end
-
-    FE --> GW
-    GW --> AS
-    GW --> ES
-    GW --> DS
-    GW --> AMS
-    GW --> TS
-    GW --> NS
-
-    ES --> PG
-    AS --> PG
-    AMS --> PG
-    
-    DS --> RD
-    AMS --> RD
-    TS --> RD
-    
-    ES --> KF
-    DS --> KF
-    NS --> KF
-    
-    DS --> OS
-    FE --> OS
-
-    GW --> PR
-    ES --> PR
-    DS --> PR
-    AMS --> PR
-    TS --> PR
-    NS --> PR
-    AS --> PR
-    
-    PR --> GR
-
-    style GW fill:#fff4e6
-    style PG fill:#ffe6e6
-    style RD fill:#ffe6e6
-    style KF fill:#ffe6e6
-    style PR fill:#e6f3ff
-    style GR fill:#e6f3ff
-```
-
-### Microservices
-- `api-gateway` (8080): routing, JWT validation, rate limiting, correlation propagation.
-- `auth-service` (8086): login/refresh/logout, JWT RS256, refresh token rotation.
-- `emergency-service` (8081): emergency lifecycle + outbox publishing.
-- `dispatch-service` (8083): priority queue, assignment engine, dispatch metrics.
-- `ambulance-service` (8082): fleet state machine, movement simulation, auto-heal logic.
-- `tracking-service` (8085): location ingestion + WebSocket broadcasting.
-- `notification-service` (8084): Kafka consumer + webhook notifications.
+### Frontend
+- **Framework**: React 18
+- **Routing**: React Router
+- **Maps**: Leaflet
+- **HTTP Client**: Axios
+- **Real-time**: WebSocket Client
 
 ### Infrastructure
-- PostgreSQL: persistent emergency/assignment/auth data.
-- Redis: distributed state, queueing, locks, rate limiting.
-- Kafka: event backbone across services.
-- OSRM: routing for distance/ETA logic.
+- **Database**: PostgreSQL (transactional data)
+- **Cache**: Redis (distributed locks, rate limiting, caching)
+- **Message Broker**: Apache Kafka (event streaming)
+- **Routing Engine**: OSRM (route calculation)
+- **Monitoring**: Prometheus & Grafana
+- **Containerization**: Docker & Docker Compose
 
 ## Key Features
 
-### Technology Stack
+### Core Functionality
+- **Priority-based Dispatch**: Automatic assignment based on emergency priority (HIGH, MEDIUM, LOW)
+- **Real-time Tracking**: Live ambulance location updates via WebSocket
+- **Smart Routing**: OSRM integration for optimal route calculation
+- **State Management**: Finite state machine for ambulance lifecycle
+- **Auto-healing**: Automatic recovery for stuck ambulance states
 
-```mermaid
-mindmap
-  root((Emergency<br/>Dispatch<br/>System))
-    Backend
-      Spring Boot 3.x
-      Spring Cloud Gateway
-      Spring Security JWT
-      Spring Data JPA
-      Spring Kafka
-      WebSocket STOMP
-    Frontend
-      React 18
-      Leaflet Maps
-      React Router
-      Axios
-      WebSocket Client
-    Data Stores
-      PostgreSQL
-        Transactional Data
-        Outbox Pattern
-      Redis
-        Distributed Locks
-        Rate Limiting
-        Caching
-        Pub/Sub
-      Kafka
-        Event Streaming
-        Service Integration
-    Infrastructure
-      Docker Compose
-      OSRM Routing
-      Prometheus
-      Grafana
-    Patterns
-      Microservices
-      Event-Driven
-      CQRS
-      Circuit Breaker
-      Saga Pattern
-      State Machine
-```
+### Design Patterns & Best Practices
+- **Transactional Outbox Pattern**: Ensures reliable event publishing
+- **Circuit Breaker**: Resilient external service calls
+- **Distributed Locking**: Redis-based atomic operations
+- **Idempotency**: Prevents duplicate processing
+- **CQRS**: Separate read and write models
+- **Event Sourcing**: Event-driven architecture with Kafka
 
-### Observability & Monitoring
+### Security
+- **Authentication**: JWT with RS256 algorithm
+- **Authorization**: Role-based access control (ADMIN, DISPATCHER, AMBULANCE_DRIVER)
+- **Token Management**: Refresh token rotation
+- **Rate Limiting**: Distributed rate limiting at gateway level
+- **API Security**: Gateway-enforced token validation
 
-```mermaid
-graph TB
-    subgraph "Application Metrics"
-        M1[Spring Actuator] --> M2[Micrometer]
-        M2 --> M3[Prometheus Endpoint<br/>/actuator/prometheus]
-    end
+### Observability
+- **Health Checks**: Liveness and readiness probes
+- **Metrics**: Prometheus integration with custom metrics
+- **Logging**: Structured logging with correlation IDs
+- **Monitoring**: Grafana dashboards for system visualization
+- **Tracing**: Request correlation across microservices
 
-    subgraph "Health Checks"
-        H1[Liveness Probe<br/>/actuator/health/liveness]
-        H2[Readiness Probe<br/>/actuator/health/readiness]
-        H3[Startup Checks<br/>DB, Redis, Kafka]
-    end
+## System Design
 
-    subgraph "Logging"
-        L1[Structured Logs]
-        L2[Correlation IDs]
-        L3[Request Tracing]
-    end
+### Microservices
 
-    subgraph "Metrics Collection"
-        P1[Prometheus:9090]
-        P1 --> P2[Service Discovery]
-        P2 --> M3
-    end
+| Service | Port | Responsibility |
+|---------|------|----------------|
+| **API Gateway** | 8080 | Request routing, authentication, rate limiting |
+| **Auth Service** | 8086 | User authentication, JWT token management |
+| **Emergency Service** | 8081 | Emergency lifecycle management, outbox pattern |
+| **Dispatch Service** | 8083 | Priority queue, ambulance assignment logic |
+| **Ambulance Service** | 8082 | Fleet state machine, movement simulation |
+| **Tracking Service** | 8085 | Location ingestion, WebSocket broadcasting |
+| **Notification Service** | 8084 | Event consumption, webhook notifications |
 
-    subgraph "Visualization"
-        G1[Grafana:3001]
-        G2[Custom Dashboards]
-        G3[Alert Rules]
-    end
+### Data Stores
 
-    M3 --> P1
-    P1 --> G1
-    G1 --> G2
-    G1 --> G3
+- **PostgreSQL**: Persistent storage for emergencies, ambulances, users, and assignments
+- **Redis**: Distributed state, queues, locks, rate limiting, and caching
+- **Kafka**: Event backbone for inter-service communication
 
-    L1 --> L2
-    L2 --> L3
-
-    style M2 fill:#ffd700
-    style P1 fill:#90EE90
-    style G1 fill:#87CEEB
-    style L2 fill:#ffd700
-```
-
-### Resilience Patterns
-
-```mermaid
-graph LR
-    subgraph "Circuit Breaker Pattern"
-        CB1[Request] --> CB2{Circuit State?}
-        CB2 -->|CLOSED| CB3[Execute Call]
-        CB2 -->|OPEN| CB4[Fast Fail]
-        CB2 -->|HALF_OPEN| CB5[Test Call]
-        CB3 --> CB6{Success?}
-        CB6 -->|Yes| CB7[Reset Counter]
-        CB6 -->|No| CB8[Increment Failure]
-        CB8 --> CB9{Threshold?}
-        CB9 -->|Exceeded| CB10[Open Circuit]
-    end
-
-    subgraph "Retry Pattern"
-        R1[Request] --> R2{Attempt Count?}
-        R2 -->|< Max| R3[Execute]
-        R2 -->|>= Max| R4[Fail]
-        R3 --> R5{Success?}
-        R5 -->|No| R6[Exponential Backoff]
-        R6 --> R2
-        R5 -->|Yes| R7[Return Result]
-    end
-
-    subgraph "Outbox Pattern"
-        O1[Business Transaction] --> O2[Write to DB]
-        O2 --> O3[Write to Outbox Table]
-        O3 --> O4[Commit Transaction]
-        O4 --> O5[Outbox Processor]
-        O5 --> O6[Publish to Kafka]
-        O6 --> O7{Published?}
-        O7 -->|Yes| O8[Mark as Sent]
-        O7 -->|No| O9[Retry Later]
-    end
-
-    style CB10 fill:#ff6b6b
-    style R6 fill:#ffd700
-    style O3 fill:#ffd700
-```
-
-## Key Features
-
-- Event-driven microservices workflow
-- Priority dispatch (`HIGH -> MEDIUM -> LOW`)
-- Ambulance FSM (`AVAILABLE -> ASSIGNED -> ON_ROUTE -> ARRIVED -> COMPLETED`)
-- Transactional outbox + idempotency protections
-- Redis-backed atomic state transitions and distributed locking
-- Auto-heal for stuck ambulance states
-- WebSocket live updates for fleet and emergencies
-- Citizen emergency request page with:
-  - map-based location selection,
-  - "Use My Location",
-  - human-readable address resolution,
-  - route path + ETA + distance to assigned ambulance
-- Notification webhook integration for assignment events
-
-## Recent Enhancements (Latest)
-
-- Circuit breaker + retry integration for OSRM calls
-- Correlation ID propagation + structured logging pattern
-- Health readiness/liveness probe groups across services
-- Startup dependency checks (DB/Redis/Kafka where applicable)
-- Frontend UX upgrades:
-  - post-submit citizen tracking state,
-  - emergency lifecycle timeline,
-  - live/offline connection indicators,
-  - fallback polling when real-time channel is down,
-  - accessibility and form-state improvements
-- Route visualization in citizen map with estimated arrival time
-
-## Security
-
-- JWT authentication (RS256)
-- Role-based dashboard access (`ADMIN`, `DISPATCHER`, `AMBULANCE_DRIVER`)
-- Gateway enforcement of token validation for protected routes
-- Refresh token rotation (short-lived access + renewable refresh)
-- Distributed rate limiting at gateway
-
-## Monitoring and Reliability
-
-- Actuator endpoints enabled for health/info/metrics/prometheus
-- Readiness/liveness probes configured
-- Prometheus metrics instrumentation
-- Structured logs include correlation IDs for traceability
-
-## Local Setup
+## Getting Started
 
 ### Prerequisites
 - Java 17+
 - Maven 3.8+
-- Docker + Docker Compose
+- Node.js 16+
+- Docker & Docker Compose
 
-### 1. Start Infrastructure
+### Installation
 
+1. **Clone the repository**
 ```bash
-docker-compose up -d postgres redis kafka osrm-pune
+git clone https://github.com/bhosalevivek04/Emergency-Dispatch-System.git
+cd Emergency-Dispatch-System
 ```
 
-### 2. Start Backend Services
-
-Run in this order (STS or terminal):
-
+2. **Configure environment**
 ```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+3. **Start infrastructure services**
+```bash
+docker-compose up -d postgres redis kafka zookeeper osrm-pune
+```
+
+4. **Start backend services** (in separate terminals)
+```bash
+# Start in this order
 cd emergency-service && mvn spring-boot:run
 cd ambulance-service && mvn spring-boot:run
 cd dispatch-service && mvn spring-boot:run
@@ -597,287 +243,176 @@ cd auth-service && mvn spring-boot:run
 cd api-gateway && mvn spring-boot:run
 ```
 
-### 3. Start Frontend
-
+5. **Start frontend**
 ```bash
 cd tracking-client
 npm install
 npm start
 ```
 
-Frontend typically runs on `http://localhost:3002` (or CRA default if configured differently).
+### Access Points
 
-## Demo Flow (Pitch Ready)
+- **Citizen App**: http://localhost:3002/citizen
+- **Dispatcher Dashboard**: http://localhost:3002/dispatcher
+- **Admin Dashboard**: http://localhost:3002/admin
+- **API Gateway**: http://localhost:8080
+- **Grafana**: http://localhost:3001 (admin/admin)
+- **Prometheus**: http://localhost:9090
 
-### Complete User Journey
+## API Endpoints
 
-```mermaid
-journey
-    title Emergency Response User Journey
-    section Citizen Experience
-      Open citizen app: 5: Citizen
-      Select emergency location: 5: Citizen
-      Submit emergency request: 5: Citizen
-      Receive emergency ID: 5: Citizen, System
-      View real-time tracking: 5: Citizen, System
-      See ambulance approaching: 5: Citizen, System
-      Ambulance arrives: 5: Citizen, Ambulance
-    section Dispatcher Experience
-      Monitor emergency queue: 5: Dispatcher
-      View auto-assignment: 5: Dispatcher, System
-      Track ambulance movement: 5: Dispatcher, System
-      Confirm completion: 5: Dispatcher, System
-    section System Operations
-      Receive emergency: 5: System
-      Calculate optimal route: 5: System
-      Assign nearest ambulance: 5: System
-      Broadcast real-time updates: 5: System
-      Send notifications: 5: System
-      Update status to completed: 5: System
+### Authentication
+```
+POST   /auth/login          # User login
+POST   /auth/refresh        # Refresh access token
+POST   /auth/logout         # User logout
 ```
 
-### Demo Walkthrough Steps
-
-```mermaid
-flowchart TD
-    Start([Start Demo]) --> Step1[1. Open Citizen App<br/>/citizen]
-    Step1 --> Step2[2. Click on Map or<br/>Use My Location]
-    Step2 --> Step3[3. Fill Priority & Details<br/>Submit Request]
-    Step3 --> Step4[4. Show Emergency ID<br/>& Status Timeline]
-    
-    Step4 --> Step5[5. Switch to Dispatcher<br/>Dashboard]
-    Step5 --> Step6[6. Show Emergency in Queue<br/>Priority: HIGH]
-    Step6 --> Step7[7. Watch Auto-Assignment<br/>Nearest Ambulance Selected]
-    
-    Step7 --> Step8[8. Switch to Admin<br/>Dashboard]
-    Step8 --> Step9[9. Click Emergency to<br/>Enable Tracking]
-    Step9 --> Step10[10. Show Real-time Route<br/>Distance & ETA]
-    
-    Step10 --> Step11[11. Back to Citizen View<br/>Show Live Tracking]
-    Step11 --> Step12[12. Ambulance Moving<br/>Route Updates Every 5s]
-    Step12 --> Step13[13. Show Arriving Soon<br/>Alert]
-    Step13 --> Step14[14. Ambulance Reaches<br/>Location]
-    
-    Step14 --> Step15[15. Show Webhook Payload<br/>webhook.site]
-    Step15 --> Step16[16. Show Grafana Metrics<br/>:3001]
-    Step16 --> End([Demo Complete])
-
-    style Start fill:#90EE90
-    style Step7 fill:#ffd700
-    style Step10 fill:#ffd700
-    style Step14 fill:#87CEEB
-    style End fill:#90EE90
+### Public Endpoints (No Auth Required)
+```
+POST   /api/emergencies/public                    # Create emergency
+GET    /api/emergencies/public/{id}               # Get emergency details
+GET    /api/tracking/public/ambulances/{id}       # Track ambulance
 ```
 
-## Demo Flow (Pitch Ready)
+### Protected Endpoints (Auth Required)
+```
+GET    /api/emergencies                           # List all emergencies
+GET    /api/emergencies/{id}                      # Get emergency by ID
+PUT    /api/emergencies/{id}/status               # Update emergency status
 
-1. Open citizen app: `/citizen`
-2. Mark emergency location on map or use current location
-3. Submit request with priority/details
-4. Show dispatcher dashboard live receiving emergency
-5. Show auto-assignment and ambulance movement
-6. Show citizen route path, ETA, and status timeline updates
-7. Show webhook payload received in `webhook.site`
+GET    /api/ambulances                            # List all ambulances
+GET    /api/ambulances/{id}                       # Get ambulance by ID
+PUT    /api/ambulances/{id}/status                # Update ambulance status
 
-## Important Endpoints
+GET    /api/dispatch/queue                        # View dispatch queue
+POST   /api/dispatch/assign                       # Manual assignment
 
-### Auth
-- `POST /auth/login`
-- `POST /auth/refresh`
-- `POST /auth/logout`
+GET    /api/tracking/ambulances/{id}/location     # Get ambulance location
+```
 
-### Citizen Public Flow
-- `POST /api/emergencies/public`
-- `GET /api/emergencies/public/{emergencyId}`
-- `GET /api/tracking/public/ambulances/{ambulanceId}`
+### Health & Monitoring
+```
+GET    /actuator/health                           # Overall health
+GET    /actuator/health/liveness                  # Liveness probe
+GET    /actuator/health/readiness                 # Readiness probe
+GET    /actuator/prometheus                       # Prometheus metrics
+```
 
-### Internal Protected APIs (via Gateway)
-- `/api/emergencies/**`
-- `/api/ambulances/**`
-- `/api/dispatch/**`
-- `/api/tracking/**`
-- `/api/notifications/**`
+## Configuration
 
-### Health
-- `GET /actuator/health`
-- `GET /actuator/health/liveness`
-- `GET /actuator/health/readiness`
+### Environment Variables
 
-## Environment Variables
+Create a `.env` file in the root directory:
 
-Use `.env` / service `application.yml` overrides for:
-- DB host/user/password
-- Redis host/port
-- Kafka bootstrap servers
-- OSRM URL
-- webhook URL and enable flag
-- startup dependency check toggles
+```env
+# Database
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=emergency_dispatch
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Kafka
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+
+# OSRM
+OSRM_URL=http://localhost:5000
+
+# Notifications
+WEBHOOK_URL=https://webhook.site/your-unique-url
+WEBHOOK_ENABLED=true
+
+# JWT
+JWT_SECRET=your-secret-key
+JWT_EXPIRATION=900000
+JWT_REFRESH_EXPIRATION=604800000
+```
 
 ## Troubleshooting
 
-### Service fails with readiness membership error
-
-If health group includes a contributor that is not present, remove it from readiness include list or disable strict validation.
+### Services won't start
+- Verify all infrastructure services are running: `docker-compose ps`
+- Check port availability: `netstat -ano | findstr :8080`
+- Verify Java version: `java -version` (must be 17+)
 
 ### No ambulance assigned
+- Check dispatch-service logs for errors
+- Verify Redis queue: `redis-cli LRANGE dispatch:emergency:queue 0 -1`
+- Ensure OSRM is accessible: `curl http://localhost:5000/health`
+- Confirm Kafka is running: `docker-compose logs kafka`
 
-- Verify fleet initialization
-- Check dispatch-service logs and Redis queue state
-- Ensure Kafka and OSRM are reachable
+### WebSocket not connecting
+- Verify tracking-service is running on port 8085
+- Check browser console for connection errors
+- Ensure API Gateway is properly routing WebSocket requests
 
-### Citizen tracking not updating
+### Database connection errors
+- Verify PostgreSQL container: `docker-compose ps postgres`
+- Check credentials in `.env` file
+- Ensure database exists: `docker-compose exec postgres psql -U postgres -l`
 
-- Check tracking-service WebSocket endpoint
-- Verify fallback polling path via gateway
-- Confirm assigned ambulance is publishing location updates
+## Technical Highlights
 
-## Repository Notes
+### Architecture & Design
+- **Microservices Architecture**: 7 independent services with clear boundaries
+- **Event-Driven Design**: Asynchronous communication via Kafka
+- **Domain-Driven Design**: Clear service boundaries and responsibilities
+- **API Gateway Pattern**: Centralized routing and security
 
-- Audit and improvement notes exist in project docs (see `docs/`, `CRITICAL-BUGS-FIXED.md`, and `CHANGES-SUMMARY.md`).
-- Dev scripts available under `dev-tools/`.
+### Reliability & Resilience
+- **Transactional Outbox**: Guarantees event delivery
+- **Circuit Breaker**: Prevents cascade failures
+- **Distributed Locking**: Ensures atomic operations
+- **Auto-healing**: Automatic recovery mechanisms
+- **Idempotency**: Safe retry logic
 
----
+### Performance & Scalability
+- **Caching Strategy**: Redis for frequently accessed data
+- **Connection Pooling**: Optimized database connections
+- **Async Processing**: Non-blocking operations
+- **Horizontal Scaling**: Stateless service design
 
-Built for high-visibility emergency response demos and production hardening tracks.
+### Security
+- **JWT Authentication**: Industry-standard token-based auth
+- **Role-Based Access Control**: Fine-grained permissions
+- **Rate Limiting**: Protection against abuse
+- **Secure Communication**: HTTPS ready
 
-## Project Highlights for Recruiters
+### Observability
+- **Health Probes**: Kubernetes-ready health checks
+- **Metrics Collection**: Prometheus integration
+- **Distributed Tracing**: Correlation ID propagation
+- **Structured Logging**: JSON-formatted logs
 
-### Technical Complexity & Scale
+### Development Practices
+- **Clean Code**: SOLID principles
+- **Design Patterns**: Factory, Strategy, Observer, State Machine
+- **Error Handling**: Comprehensive exception management
+- **API Documentation**: Clear endpoint specifications
 
-```mermaid
-graph LR
-    subgraph "Architecture Complexity"
-        A1[7 Microservices]
-        A2[4 Data Stores]
-        A3[Event-Driven Design]
-        A4[Real-time WebSocket]
-    end
+## Project Statistics
 
-    subgraph "Engineering Practices"
-        B1[Transactional Outbox]
-        B2[Circuit Breaker]
-        B3[Distributed Locking]
-        B4[State Machine FSM]
-        B5[Idempotency Keys]
-    end
+- **Microservices**: 7 independent services
+- **API Endpoints**: 40+ RESTful endpoints
+- **Design Patterns**: 10+ enterprise patterns
+- **Technologies**: 15+ modern technologies
+- **Lines of Code**: 15,000+ well-structured code
+- **Real-time Channels**: WebSocket with STOMP
 
-    subgraph "Production Readiness"
-        C1[Health Probes]
-        C2[Correlation Tracing]
-        C3[Metrics & Monitoring]
-        C4[Rate Limiting]
-        C5[JWT Security]
-    end
+## License
 
-    subgraph "User Experience"
-        D1[Real-time Tracking]
-        D2[Live Route Updates]
-        D3[Status Timeline]
-        D4[Responsive Design]
-    end
+This project is licensed under the MIT License.
 
-    style A3 fill:#ffd700
-    style B1 fill:#ffd700
-    style B3 fill:#ffd700
-    style C2 fill:#90EE90
-    style D1 fill:#87CEEB
-```
+## Contact
 
-### Key Metrics
-
-| Metric | Value | Description |
-|--------|-------|-------------|
-| **Services** | 7 | Independent microservices with clear boundaries |
-| **Technologies** | 15+ | Spring Boot, React, Kafka, Redis, PostgreSQL, etc. |
-| **API Endpoints** | 40+ | RESTful APIs with proper HTTP semantics |
-| **Real-time Channels** | 3 | WebSocket topics for live updates |
-| **Design Patterns** | 10+ | Outbox, Circuit Breaker, State Machine, CQRS, etc. |
-| **Lines of Code** | 15,000+ | Well-structured, maintainable codebase |
-| **Test Coverage** | High | Unit, integration, and E2E testing |
-| **Response Time** | <100ms | Average API response time |
-| **Uptime** | 99.9% | With health checks and auto-recovery |
-
-### Technical Skills Demonstrated
-
-#### Backend Engineering
-- ✅ Microservices architecture design and implementation
-- ✅ Event-driven systems with Kafka
-- ✅ Distributed systems patterns (locks, transactions, idempotency)
-- ✅ State machine implementation for complex workflows
-- ✅ RESTful API design with proper HTTP semantics
-- ✅ WebSocket real-time communication
-- ✅ Database design and optimization
-- ✅ Caching strategies with Redis
-- ✅ Security implementation (JWT, RBAC)
-
-#### Frontend Engineering
-- ✅ React with hooks and modern patterns
-- ✅ Real-time data synchronization
-- ✅ Interactive map integration (Leaflet)
-- ✅ Responsive and accessible UI design
-- ✅ State management and data flow
-- ✅ WebSocket client implementation
-- ✅ Error handling and fallback strategies
-
-#### DevOps & Operations
-- ✅ Docker containerization
-- ✅ Docker Compose orchestration
-- ✅ Health check implementation
-- ✅ Metrics and monitoring (Prometheus/Grafana)
-- ✅ Structured logging and tracing
-- ✅ Service dependency management
-
-#### Software Engineering Practices
-- ✅ Clean code and SOLID principles
-- ✅ Design patterns application
-- ✅ Error handling and resilience
-- ✅ API documentation
-- ✅ Git version control
-- ✅ Code organization and modularity
-
-### Business Impact
-
-```mermaid
-mindmap
-  root((Business<br/>Value))
-    Operational Efficiency
-      Automated Dispatch
-      Reduced Response Time
-      Optimal Resource Allocation
-      Real-time Fleet Visibility
-    User Experience
-      Citizen Self-Service
-      Live Tracking
-      Transparent Status
-      Mobile-Friendly
-    Reliability
-      99.9% Uptime
-      Auto-Recovery
-      Fault Tolerance
-      Data Consistency
-    Scalability
-      Horizontal Scaling
-      Event-Driven
-      Stateless Services
-      Distributed Architecture
-```
-
-### Demo Talking Points
-
-1. **Architecture**: "Built a production-grade microservices system with 7 independent services communicating via Kafka event streaming"
-
-2. **Real-time**: "Implemented WebSocket-based real-time tracking with fallback polling, ensuring users always see live ambulance locations"
-
-3. **Reliability**: "Applied enterprise patterns like transactional outbox, circuit breakers, and distributed locking to ensure data consistency"
-
-4. **User Experience**: "Created an intuitive citizen interface with map-based location selection, live route visualization, and ETA calculations"
-
-5. **Observability**: "Integrated comprehensive monitoring with Prometheus and Grafana, plus correlation ID tracing across all services"
-
-6. **Security**: "Implemented JWT-based authentication with RS256, role-based access control, and distributed rate limiting"
-
-7. **State Management**: "Designed a finite state machine for ambulance lifecycle with auto-heal logic for stuck states"
-
-8. **Performance**: "Optimized with Redis caching, connection pooling, and async processing to achieve sub-100ms response times"
+- **GitHub**: [bhosalevivek04](https://github.com/bhosalevivek04)
+- **Repository**: [Emergency-Dispatch-System](https://github.com/bhosalevivek04/Emergency-Dispatch-System)
 
 ---
+
+**Built with modern technologies and enterprise-grade patterns for production readiness.**
