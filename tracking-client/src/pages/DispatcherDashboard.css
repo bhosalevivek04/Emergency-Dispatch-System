@@ -219,3 +219,21 @@
 .grafana-link-button:active {
   background-color: #1d4ed8;
 }
+
+/* Tracking hint panel */
+.tracking-hint-panel {
+  background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
+  border: 2px solid #3b82f6;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+}
+
+.tracking-hint-panel p {
+  margin: 0;
+  font-size: 13px;
+  color: #1e40af;
+  font-weight: 500;
+  text-align: center;
+}

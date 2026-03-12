@@ -1,0 +1,245 @@
+.tracking-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 2px solid #e5e7eb;
+  transition: all 0.3s ease;
+}
+
+.tracking-panel.arriving-soon {
+  border-color: #f59e0b;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: #f59e0b;
+  }
+  50% {
+    border-color: #fbbf24;
+  }
+}
+
+.tracking-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.tracking-panel-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.tracking-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.tracking-close-btn:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.tracking-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tracking-info-section {
+  background: #f9fafb;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.tracking-info-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tracking-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.tracking-detail:last-child {
+  margin-bottom: 0;
+}
+
+.tracking-label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.tracking-value {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.tracking-coords {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.tracking-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tracking-badge.priority-high {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.tracking-badge.priority-medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.tracking-badge.priority-low {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.tracking-status-section {
+  margin-bottom: 16px;
+}
+
+.tracking-status-badge {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.status-indicator {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-indicator.status-on-route {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.status-indicator.status-assigned {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-indicator.status-at-location {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-indicator.status-completed {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.tracking-alert {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.tracking-alert:last-child {
+  margin-bottom: 0;
+}
+
+.arriving-alert {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+
+.arrived-alert {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #10b981;
+}
+
+.tracking-route-section {
+  background: #f9fafb;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.tracking-route-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.tracking-route-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.tracking-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 16px;
+  color: #1f2937;
+  font-weight: 700;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .tracking-info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .tracking-route-stats {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

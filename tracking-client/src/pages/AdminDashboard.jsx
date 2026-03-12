@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { emergencyApi, ambulanceApi } from '../services/api';
 import { wsService } from '../services/websocketService';
+import { fetchOSRMRoute } from '../services/osrm';
 import MapComponent from '../components/map/MapComponent';
 import EmergencyMarker from '../components/map/EmergencyMarker';
 import AmbulanceMarker from '../components/map/AmbulanceMarker';
+import { Polyline } from 'react-leaflet';
 import EmergencyQueuePanel from '../components/EmergencyQueuePanel';
 import FleetStatusPanel from '../components/FleetStatusPanel';
 import EmergencyCreationControl from '../components/EmergencyCreationControl';
@@ -12,8 +14,38 @@ import FleetManagementPanel from '../components/FleetManagementPanel';
 import SystemHealthPanel from '../components/SystemHealthPanel';
 import SkeletonLoader from '../components/SkeletonLoader';
 import ConnectionStatus from '../components/ConnectionStatus';
+import TrackingPanel from '../components/TrackingPanel';
 import { useToast } from '../contexts/ToastContext';
 import '../pages/DispatcherDashboard.css';
+
+// Helper functions for route trimming (same as CitizenRequestPage)
+const toRad = (deg) => (deg * Math.PI) / 180;
+
+const distanceMeters = (a, b) => {
+  const R = 6371000;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+const nearestIndex = (points, target) => {
+  if (!points?.length) return -1;
+  let bestIdx = 0;
+  let bestDist = Number.POSITIVE_INFINITY;
+  points.forEach((pt, idx) => {
+    const d = distanceMeters(pt, target);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = idx;
+    }
+  });
+  return bestIdx;
+};
 
 /**
  * AdminDashboard component
@@ -43,8 +75,10 @@ const AdminDashboard = () => {
   // Selected items for highlighting
   const [selectedEmergency, setSelectedEmergency] = useState(null);
   const [selectedAmbulance, setSelectedAmbulance] = useState(null);
+  const [trackedPair, setTrackedPair] = useState(null); // { emergencyId, ambulanceId }
   const [mapClickMode, setMapClickMode] = useState(false);
   const [showAdminTools, setShowAdminTools] = useState(false);
+  const [routeData, setRouteData] = useState({});
   const locationHandlerRef = useRef(null);
 
   /**
@@ -118,11 +152,21 @@ const AdminDashboard = () => {
   }, [showToast]);
 
   /**
-   * Handle emergency marker click
+   * Handle emergency marker click - enable tracking
    */
   const handleEmergencyClick = (emergency) => {
     setSelectedEmergency(emergency);
     setSelectedAmbulance(null);
+    
+    // If emergency is assigned, set up tracking
+    if (emergency.status === 'ASSIGNED' && emergency.assignedAmbulanceId) {
+      setTrackedPair({
+        emergencyId: emergency.id,
+        ambulanceId: emergency.assignedAmbulanceId
+      });
+    } else {
+      setTrackedPair(null);
+    }
   };
 
   /**
@@ -131,6 +175,7 @@ const AdminDashboard = () => {
   const handleAmbulanceClick = (ambulance) => {
     setSelectedAmbulance(ambulance);
     setSelectedEmergency(null);
+    setTrackedPair(null);
   };
 
   const applyEmergencyUpdate = useCallback((update) => {
@@ -275,6 +320,107 @@ const AdminDashboard = () => {
     fetchAmbulances(false);
   }, [fetchEmergencies, fetchAmbulances]);
 
+  /**
+   * Handle clear tracking event
+   */
+  useEffect(() => {
+    const handleClearTracking = () => {
+      setTrackedPair(null);
+      setSelectedEmergency(null);
+      setSelectedAmbulance(null);
+    };
+
+    window.addEventListener('clearTracking', handleClearTracking);
+    return () => window.removeEventListener('clearTracking', handleClearTracking);
+  }, []);
+
+  /**
+   * Fetch routes for assigned emergencies when emergencies or ambulances change
+   * Routes are dynamically updated and trimmed to show only the path between current positions
+   */
+  useEffect(() => {
+    const fetchRoutes = async () => {
+      // Find emergencies that have assigned ambulances
+      const assignedEmergencies = emergencies.filter(
+        e => e.status === 'ASSIGNED' && e.assignedAmbulanceId
+      );
+
+      // Clear routes for emergencies that are no longer assigned
+      setRouteData(prev => {
+        const newRouteData = {};
+        assignedEmergencies.forEach(emergency => {
+          const routeKey = `${emergency.id}-${emergency.assignedAmbulanceId}`;
+          if (prev[routeKey]) {
+            newRouteData[routeKey] = prev[routeKey];
+          }
+        });
+        return newRouteData;
+      });
+
+      for (const emergency of assignedEmergencies) {
+        const ambulance = ambulances.find(
+          a => a.id === emergency.assignedAmbulanceId || a.id === emergency.ambulanceId
+        );
+
+        if (ambulance && ambulance.latitude && ambulance.longitude) {
+          const emergencyLat = emergency.latitude ?? emergency.lat;
+          const emergencyLon = emergency.longitude ?? emergency.lon;
+
+          if (emergencyLat && emergencyLon) {
+            const routeKey = `${emergency.id}-${ambulance.id}`;
+            
+            try {
+              const route = await fetchOSRMRoute(
+                ambulance.latitude,
+                ambulance.longitude,
+                emergencyLat,
+                emergencyLon
+              );
+              
+              if (route && route.coordinates) {
+                // Trim route to show only path between current ambulance position and emergency
+                const ambulancePoint = [ambulance.latitude, ambulance.longitude];
+                const emergencyPoint = [emergencyLat, emergencyLon];
+                const rawCoordinates = Array.isArray(route.coordinates) ? route.coordinates : [];
+
+                let normalized = rawCoordinates;
+                const startIdx = nearestIndex(rawCoordinates, ambulancePoint);
+                const endIdx = nearestIndex(rawCoordinates, emergencyPoint);
+                
+                if (startIdx >= 0 && endIdx >= 0) {
+                  const from = Math.min(startIdx, endIdx);
+                  const to = Math.max(startIdx, endIdx);
+                  normalized = rawCoordinates.slice(from, to + 1);
+                }
+
+                const finalCoordinates = [ambulancePoint, ...normalized, emergencyPoint];
+                
+                setRouteData(prev => ({
+                  ...prev,
+                  [routeKey]: {
+                    coordinates: finalCoordinates,
+                    distance: route.distance,
+                    duration: route.duration,
+                  },
+                }));
+              }
+            } catch (error) {
+              console.error('Error fetching route:', error);
+            }
+          }
+        }
+      }
+    };
+
+    if (emergencies.length > 0 && ambulances.length > 0) {
+      fetchRoutes();
+      
+      // Refresh routes every 10 seconds to keep them updated
+      const interval = setInterval(fetchRoutes, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [emergencies, ambulances]);
+
   return (
     <div className="dispatcher-dashboard">
       {/* Header with logout button */}
@@ -329,6 +475,27 @@ const AdminDashboard = () => {
                     onClick={handleAmbulanceClick}
                   />
                 ))}
+
+                {/* Render route polylines for assigned emergencies - using actual OSRM route coordinates */}
+                {Object.entries(routeData).map(([routeKey, route]) => {
+                  if (!route.coordinates || route.coordinates.length < 2) return null;
+                  const isTracked = trackedPair && 
+                    routeKey === `${trackedPair.emergencyId}-${trackedPair.ambulanceId}`;
+                  
+                  return (
+                    <Polyline
+                      key={routeKey}
+                      positions={route.coordinates}
+                      pathOptions={{
+                        color: isTracked ? '#f59e0b' : '#3b82f6',
+                        weight: isTracked ? 6 : 5,
+                        opacity: isTracked ? 0.95 : 0.8,
+                        lineCap: 'round',
+                        lineJoin: 'round',
+                      }}
+                    />
+                  );
+                })}
               </MapComponent>
 
               {/* Emergency creation control */}
@@ -346,6 +513,29 @@ const AdminDashboard = () => {
 
         {/* Side panel - 40% width */}
         <div className="side-panel">
+          {/* Tracking Panel - shows when emergency-ambulance pair is tracked */}
+          {trackedPair && (() => {
+            const emergency = emergencies.find(e => e.id === trackedPair.emergencyId);
+            const ambulance = ambulances.find(a => a.id === trackedPair.ambulanceId);
+            const routeKey = `${trackedPair.emergencyId}-${trackedPair.ambulanceId}`;
+            const route = routeData[routeKey];
+            
+            return emergency && ambulance ? (
+              <TrackingPanel 
+                emergency={emergency}
+                ambulance={ambulance}
+                routeData={route}
+              />
+            ) : null;
+          })()}
+
+          {/* Tracking hint - only show when no tracking is active */}
+          {!trackedPair && emergencies.some(e => e.status === 'ASSIGNED') && (
+            <div className="tracking-hint-panel">
+              <p>💡 Click on an assigned emergency to track ambulance in real-time</p>
+            </div>
+          )}
+
           {/* Emergency Queue Panel */}
           {isLoadingEmergencies ? (
             <SkeletonLoader type="card" count={3} />
